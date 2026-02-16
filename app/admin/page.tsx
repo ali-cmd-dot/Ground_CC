@@ -13,8 +13,9 @@ import {
   Plus,
   CheckCircle,
   Clock,
-  AlertTriangle,
-  Eye
+  Eye,
+  Upload,
+  UserPlus
 } from 'lucide-react'
 import type { Issue, Technician } from '@/lib/types'
 import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
@@ -99,6 +100,25 @@ export default function AdminDashboard() {
     }
   }
 
+  const handleAssignIssue = async (issueId: string, technicianId: string) => {
+    try {
+      const { error } = await supabase
+        .from('issues')
+        .update({ 
+          assigned_to: technicianId,
+          status: 'assigned'
+        })
+        .eq('id', issueId)
+
+      if (error) throw error
+
+      alert('Issue assigned successfully!')
+      fetchData()
+    } catch (error: any) {
+      alert('Error: ' + error.message)
+    }
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -176,32 +196,97 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
+        {/* Quick Actions */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <Card 
+            className="hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => router.push('/admin/issues/create')}
+          >
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <Plus className="h-12 w-12 text-primary mx-auto mb-4" />
+                <h3 className="font-semibold mb-2">Create Issue</h3>
+                <p className="text-sm text-muted-foreground">
+                  Add single issue manually
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card 
+            className="hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => router.push('/admin/import')}
+          >
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <Upload className="h-12 w-12 text-primary mx-auto mb-4" />
+                <h3 className="font-semibold mb-2">Import CSV</h3>
+                <p className="text-sm text-muted-foreground">
+                  Bulk import from Excel/CSV
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card 
+            className="hover:shadow-lg transition-shadow cursor-pointer"
+            onClick={() => router.push('/admin/technicians')}
+          >
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <UserPlus className="h-12 w-12 text-primary mx-auto mb-4" />
+                <h3 className="font-semibold mb-2">Technicians</h3>
+                <p className="text-sm text-muted-foreground">
+                  Manage team members
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
+            <CardContent className="pt-6">
+              <div className="text-center">
+                <MapPin className="h-12 w-12 text-primary mx-auto mb-4" />
+                <h3 className="font-semibold mb-2">Live Map</h3>
+                <p className="text-sm text-muted-foreground">
+                  Track technicians live
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* Issues List */}
         <Card className="mb-8">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>All Issues</CardTitle>
-              <Button size="sm" onClick={() => router.push('/admin/issues/create')}>
-                <Plus className="h-4 w-4 mr-2" />
-                Create Issue
-              </Button>
+              <CardTitle>All Issues ({issues.length})</CardTitle>
+              <div className="flex gap-2">
+                <select className="h-9 px-3 border rounded-md text-sm">
+                  <option value="all">All Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                </select>
+              </div>
             </div>
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
               {issues.length === 0 ? (
                 <p className="text-center text-muted-foreground py-8">
-                  No issues found. Create your first issue to get started.
+                  No issues found. Create your first issue or import from CSV.
                 </p>
               ) : (
                 issues.map((issue) => (
                   <div
                     key={issue.id}
-                    className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
+                    className="flex items-start justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                   >
                     <div className="flex-1">
                       <div className="flex items-center gap-3 mb-2">
-                        <h3 className="font-medium text-lg">{issue.vehicle_number}</h3>
+                        <h3 className="font-medium text-lg">{issue.vehicle_no}</h3>
                         <span className={`text-xs px-2 py-1 rounded-full text-white ${getStatusColor(issue.status)}`}>
                           {issue.status}
                         </span>
@@ -209,29 +294,66 @@ export default function AdminDashboard() {
                           {issue.priority}
                         </span>
                       </div>
-                      <p className="text-sm text-muted-foreground">
-                        Client: {issue.client_name} • {issue.client_phone}
+                      <p className="text-sm font-medium text-gray-900 dark:text-white">
+                        Client: {issue.client}
                       </p>
+                      {issue.poc_name && (
+                        <p className="text-sm text-muted-foreground">
+                          POC: {issue.poc_name} • {issue.poc_number}
+                        </p>
+                      )}
+                      {issue.city && (
+                        <p className="text-sm text-muted-foreground">
+                          <MapPin className="h-3 w-3 inline mr-1" />
+                          {issue.city} {issue.location && `- ${issue.location}`}
+                        </p>
+                      )}
                       <p className="text-sm text-muted-foreground mt-1">
-                        <MapPin className="h-3 w-3 inline mr-1" />
-                        {issue.location}
+                        Issue: {issue.issue}
                       </p>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        Issue: {issue.issue_description}
-                      </p>
-                      {issue.assigned_to && (
-                        <p className="text-xs text-blue-600 mt-2">
-                          Assigned to: {(issue as any).technicians?.name || 'Unknown'}
+                      {issue.availability && (
+                        <p className="text-xs text-blue-600 mt-1">
+                          Available: {issue.availability}
+                        </p>
+                      )}
+                      {issue.assigned_to ? (
+                        <p className="text-xs text-green-600 mt-1 font-medium">
+                          ✓ Assigned to: {(issue as any).technicians?.name || 'Unknown'}
+                        </p>
+                      ) : (
+                        <p className="text-xs text-orange-600 mt-1 font-medium">
+                          ⚠ Not assigned yet
                         </p>
                       )}
                       <p className="text-xs text-muted-foreground mt-1">
                         Created: {formatDateTime(issue.created_at)}
                       </p>
                     </div>
-                    <Button variant="outline" size="sm">
-                      <Eye className="h-4 w-4 mr-2" />
-                      View
-                    </Button>
+                    <div className="flex gap-2 flex-col">
+                      {!issue.assigned_to && (
+                        <select
+                          className="h-9 px-3 border rounded-md text-sm min-w-[150px]"
+                          onChange={(e) => {
+                            if (e.target.value) {
+                              handleAssignIssue(issue.id, e.target.value)
+                            }
+                          }}
+                        >
+                          <option value="">Assign to...</option>
+                          {technicians
+                            .filter(t => t.role === 'technician')
+                            .map(tech => (
+                              <option key={tech.id} value={tech.id}>
+                                {tech.name}
+                              </option>
+                            ))}
+                        </select>
+                      )}
+                      <Button variant="outline" size="sm">
+                        <Eye className="h-4 w-4 mr-2" />
+                        View
+                      </Button>
+                    </div>
                   </div>
                 ))
               )}
