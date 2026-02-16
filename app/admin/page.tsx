@@ -9,12 +9,12 @@ import {
   MapPin, 
   Users, 
   ClipboardList, 
-  DollarSign,
   LogOut,
   Plus,
   CheckCircle,
   Clock,
-  AlertTriangle
+  AlertTriangle,
+  Eye
 } from 'lucide-react'
 import type { Issue, Technician } from '@/lib/types'
 import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
@@ -34,6 +34,18 @@ export default function AdminDashboard() {
   useEffect(() => {
     checkAuth()
     fetchData()
+    
+    // Real-time subscription
+    const subscription = supabase
+      .channel('issues_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'issues' }, () => {
+        fetchData()
+      })
+      .subscribe()
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
   const checkAuth = async () => {
@@ -56,12 +68,14 @@ export default function AdminDashboard() {
 
   const fetchData = async () => {
     try {
-      // Fetch issues
+      // Fetch issues with technician names
       const { data: issuesData } = await supabase
         .from('issues')
-        .select('*')
+        .select(`
+          *,
+          technicians:assigned_to (name)
+        `)
         .order('created_at', { ascending: false })
-        .limit(10)
 
       // Fetch technicians
       const { data: techData } = await supabase
@@ -72,7 +86,7 @@ export default function AdminDashboard() {
         setIssues(issuesData)
         setStats({
           totalIssues: issuesData.length,
-          pendingIssues: issuesData.filter(i => i.status === 'pending').length,
+          pendingIssues: issuesData.filter(i => i.status === 'pending' || i.status === 'assigned').length,
           completedIssues: issuesData.filter(i => i.status === 'completed').length,
           activeTechnicians: techData?.length || 0
         })
@@ -162,14 +176,14 @@ export default function AdminDashboard() {
           </Card>
         </div>
 
-        {/* Recent Issues */}
+        {/* Issues List */}
         <Card className="mb-8">
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Recent Issues</CardTitle>
-              <Button size="sm">
+              <CardTitle>All Issues</CardTitle>
+              <Button size="sm" onClick={() => router.push('/admin/issues/create')}>
                 <Plus className="h-4 w-4 mr-2" />
-                New Issue
+                Create Issue
               </Button>
             </div>
           </CardHeader>
@@ -186,8 +200,8 @@ export default function AdminDashboard() {
                     className="flex items-center justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors"
                   >
                     <div className="flex-1">
-                      <div className="flex items-center gap-3">
-                        <h3 className="font-medium">{issue.vehicle_number}</h3>
+                      <div className="flex items-center gap-3 mb-2">
+                        <h3 className="font-medium text-lg">{issue.vehicle_number}</h3>
                         <span className={`text-xs px-2 py-1 rounded-full text-white ${getStatusColor(issue.status)}`}>
                           {issue.status}
                         </span>
@@ -195,15 +209,28 @@ export default function AdminDashboard() {
                           {issue.priority}
                         </span>
                       </div>
-                      <p className="text-sm text-muted-foreground mt-1">
-                        {issue.client_name} • {issue.location}
+                      <p className="text-sm text-muted-foreground">
+                        Client: {issue.client_name} • {issue.client_phone}
                       </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        <MapPin className="h-3 w-3 inline mr-1" />
+                        {issue.location}
+                      </p>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Issue: {issue.issue_description}
+                      </p>
+                      {issue.assigned_to && (
+                        <p className="text-xs text-blue-600 mt-2">
+                          Assigned to: {(issue as any).technicians?.name || 'Unknown'}
+                        </p>
+                      )}
                       <p className="text-xs text-muted-foreground mt-1">
-                        {formatDateTime(issue.created_at)}
+                        Created: {formatDateTime(issue.created_at)}
                       </p>
                     </div>
                     <Button variant="outline" size="sm">
-                      View Details
+                      <Eye className="h-4 w-4 mr-2" />
+                      View
                     </Button>
                   </div>
                 ))
@@ -211,45 +238,6 @@ export default function AdminDashboard() {
             </div>
           </CardContent>
         </Card>
-
-        {/* Quick Actions */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent className="pt-6">
-              <div className="text-center">
-                <MapPin className="h-12 w-12 text-primary mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Live Tracking</h3>
-                <p className="text-sm text-muted-foreground">
-                  View real-time technician locations
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent className="pt-6">
-              <div className="text-center">
-                <Users className="h-12 w-12 text-primary mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Manage Technicians</h3>
-                <p className="text-sm text-muted-foreground">
-                  Add, edit or view technician details
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-shadow cursor-pointer">
-            <CardContent className="pt-6">
-              <div className="text-center">
-                <DollarSign className="h-12 w-12 text-primary mx-auto mb-4" />
-                <h3 className="font-semibold mb-2">Reports & Analytics</h3>
-                <p className="text-sm text-muted-foreground">
-                  View performance and revenue reports
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
       </main>
     </div>
   )
