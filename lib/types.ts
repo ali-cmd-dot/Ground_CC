@@ -11,16 +11,30 @@ export interface Technician {
 
 export interface Issue {
   id: string
-  vehicle_number: string
-  client_name: string
-  client_phone: string
-  issue_description: string
-  location: string
-  latitude: number
-  longitude: number
+  
+  // Excel columns
+  availability_date?: string
+  client: string
+  vehicle_no: string
+  last_online?: string
+  poc_name?: string
+  poc_number?: string
+  city?: string
+  location?: string
+  latitude?: number
+  longitude?: number
+  issue: string
+  availability?: string
+  last_rectification_status?: string
+  last_rectification_date?: string
+  delay?: string
+  days?: number
+  
+  // System fields
+  assigned_to?: string
   status: 'pending' | 'assigned' | 'in-progress' | 'completed' | 'cancelled'
   priority: 'low' | 'medium' | 'high' | 'urgent'
-  assigned_to?: string
+  
   created_at: string
   updated_at: string
   started_at?: string
