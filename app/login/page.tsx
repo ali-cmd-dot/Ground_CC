@@ -17,23 +17,13 @@ export default function LoginPage() {
     e.preventDefault()
     setLoading(true)
     setError('')
-
     try {
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      })
-
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password })
       if (error) throw error
-
       if (data.session) {
-        const { data: technician } = await supabase
-          .from('technicians')
-          .select('role')
-          .eq('id', data.session.user.id)
-          .single()
-
-        if (technician?.role === 'admin' || technician?.role === 'manager') {
+        const { data: tech } = await supabase
+          .from('technicians').select('role').eq('id', data.session.user.id).single()
+        if (tech?.role === 'admin' || tech?.role === 'manager') {
           router.push('/admin')
         } else {
           router.push('/technician')
@@ -49,482 +39,311 @@ export default function LoginPage() {
   return (
     <>
       <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Syne:wght@400;500;600;700;800&family=Inter:wght@300;400;500&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&display=swap');
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-
-        .login-root {
+        .page {
           min-height: 100vh;
           display: grid;
-          grid-template-columns: 1fr 1fr;
-          background: #080808;
-          font-family: 'Inter', sans-serif;
+          grid-template-columns: 55% 45%;
+          background: #050507;
+          font-family: 'Outfit', sans-serif;
           overflow: hidden;
         }
 
-        /* LEFT SIDE */
-        .left-panel {
+        .left {
           position: relative;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: #0a0a0a;
           overflow: hidden;
+          background: #060608;
         }
 
-        .left-panel::before {
-          content: '';
+        .vlines {
           position: absolute;
           inset: 0;
-          background: 
-            radial-gradient(ellipse 60% 50% at 50% 50%, rgba(0, 80, 255, 0.08) 0%, transparent 70%),
-            repeating-linear-gradient(
-              90deg,
-              transparent,
-              transparent 80px,
-              rgba(255,255,255,0.015) 80px,
-              rgba(255,255,255,0.015) 81px
-            ),
-            repeating-linear-gradient(
-              0deg,
-              transparent,
-              transparent 80px,
-              rgba(255,255,255,0.015) 80px,
-              rgba(255,255,255,0.015) 81px
-            );
-        }
-
-        /* Vertical lines like in screenshot */
-        .grid-lines {
-          position: absolute;
-          inset: 0;
-          overflow: hidden;
-        }
-
-        .grid-lines span {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          width: 1px;
-          background: linear-gradient(
-            to bottom,
-            transparent 0%,
-            rgba(255,255,255,0.04) 20%,
-            rgba(255,255,255,0.08) 50%,
-            rgba(255,255,255,0.04) 80%,
-            transparent 100%
+          pointer-events: none;
+          background-image: repeating-linear-gradient(
+            90deg,
+            transparent 0px,
+            transparent 119px,
+            rgba(255,255,255,0.04) 119px,
+            rgba(255,255,255,0.04) 120px
           );
-          animation: linePulse 4s ease-in-out infinite;
         }
 
-        .grid-lines span:nth-child(1) { left: 15%; animation-delay: 0s; }
-        .grid-lines span:nth-child(2) { left: 30%; animation-delay: 0.5s; }
-        .grid-lines span:nth-child(3) { left: 45%; animation-delay: 1s; }
-        .grid-lines span:nth-child(4) { left: 60%; animation-delay: 1.5s; }
-        .grid-lines span:nth-child(5) { left: 75%; animation-delay: 2s; }
-        .grid-lines span:nth-child(6) { left: 90%; animation-delay: 0.8s; }
-
-        /* Horizontal line that runs top to bottom (like in screenshot) */
-        .center-line {
+        .hline {
           position: absolute;
+          left: 0; right: 0;
+          top: 50%;
+          height: 1px;
+          background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.06) 20%, rgba(255,255,255,0.12) 50%, rgba(255,255,255,0.06) 80%, transparent 100%);
+        }
+
+        .vline-center {
+          position: absolute;
+          top: 0; bottom: 0;
           left: 50%;
-          top: 0;
-          bottom: 0;
           width: 1px;
-          background: linear-gradient(
-            to bottom,
-            transparent 0%,
-            rgba(255,255,255,0.1) 30%,
-            rgba(0, 100, 255, 0.3) 50%,
-            rgba(255,255,255,0.1) 70%,
-            transparent 100%
-          );
+          background: linear-gradient(180deg, transparent 0%, rgba(0,120,255,0.15) 30%, rgba(0,120,255,0.4) 50%, rgba(0,120,255,0.15) 70%, transparent 100%);
+          animation: vp 4s ease-in-out infinite;
+        }
+        @keyframes vp { 0%,100%{opacity:.5} 50%{opacity:1} }
+
+        .ambient {
+          position: absolute;
+          inset: 0;
+          background: radial-gradient(ellipse 70% 60% at 50% 50%, rgba(0,60,200,0.07) 0%, transparent 70%);
         }
 
-        @keyframes linePulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 1; }
-        }
-
-        .logo-container {
+        .shield-scene {
           position: relative;
           z-index: 2;
+          width: 340px;
+          height: 340px;
           display: flex;
           align-items: center;
           justify-content: center;
         }
 
-        .shield-wrapper {
-          position: relative;
-          width: 280px;
-          height: 280px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-        }
-
-        .shield-glow {
+        .shield-backdrop {
           position: absolute;
-          inset: -40px;
-          background: radial-gradient(circle, rgba(0, 80, 255, 0.12) 0%, transparent 70%);
+          width: 300px;
+          height: 300px;
           border-radius: 50%;
-          animation: glowPulse 3s ease-in-out infinite;
+          background: radial-gradient(circle at 38% 33%, #16162a 0%, #0a0a16 55%, #050508 100%);
+          box-shadow: 0 0 80px rgba(0,80,200,0.18), 0 0 160px rgba(0,80,200,0.08), inset 0 1px 0 rgba(255,255,255,0.06);
+          border: 1px solid rgba(255,255,255,0.07);
         }
 
-        @keyframes glowPulse {
-          0%, 100% { opacity: 0.5; transform: scale(0.95); }
-          50% { opacity: 1; transform: scale(1.05); }
+        .shield-backdrop::before {
+          content: '';
+          position: absolute;
+          top: 10%; left: 15%; right: 15%;
+          height: 30%;
+          background: linear-gradient(180deg, rgba(255,255,255,0.05) 0%, transparent 100%);
+          border-radius: 50%;
+          filter: blur(10px);
         }
 
         .shield-img {
-          width: 100%;
-          height: 100%;
+          position: relative;
+          z-index: 1;
+          width: 210px;
+          height: 210px;
           object-fit: contain;
-          filter: drop-shadow(0 0 40px rgba(0, 80, 255, 0.3)) drop-shadow(0 0 80px rgba(0, 80, 255, 0.1));
-          animation: shieldFloat 6s ease-in-out infinite;
+          filter: drop-shadow(0 0 35px rgba(0,160,255,0.55)) drop-shadow(0 0 90px rgba(0,80,200,0.22)) drop-shadow(0 10px 30px rgba(0,0,0,0.9));
+          animation: sf 5s ease-in-out infinite;
+        }
+        @keyframes sf {
+          0%,100% { transform: translateY(0); }
+          50% { transform: translateY(-10px); }
         }
 
-        @keyframes shieldFloat {
-          0%, 100% { transform: translateY(0px); }
-          50% { transform: translateY(-12px); }
-        }
-
-        /* RIGHT SIDE */
-        .right-panel {
+        .right {
           position: relative;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 48px;
-          background: #0d0d0d;
-          border-left: 1px solid rgba(255,255,255,0.05);
+          padding: 48px 56px;
+          background: #07070a;
+          border-left: 1px solid rgba(255,255,255,0.04);
         }
 
-        .right-panel::before {
-          content: '';
-          position: absolute;
-          top: -200px;
-          right: -200px;
-          width: 500px;
-          height: 500px;
-          background: radial-gradient(circle, rgba(0, 80, 255, 0.05) 0%, transparent 70%);
-          pointer-events: none;
-        }
-
-        .form-container {
+        .form-box {
           width: 100%;
-          max-width: 420px;
-          position: relative;
-          z-index: 2;
+          max-width: 400px;
         }
 
-        .brand-name {
-          font-family: 'Syne', sans-serif;
-          font-size: 42px;
+        .brand {
+          font-size: 50px;
           font-weight: 800;
           color: #ffffff;
-          letter-spacing: -1px;
-          margin-bottom: 8px;
+          letter-spacing: -2.5px;
+          line-height: 1;
+          margin-bottom: 6px;
           display: flex;
-          align-items: center;
-          gap: 2px;
+          align-items: flex-end;
         }
-
-        .brand-name .dot {
-          width: 8px;
-          height: 8px;
+        .brand-dot {
+          width: 10px; height: 10px;
           background: #2563eb;
           border-radius: 50%;
-          display: inline-block;
-          margin-left: 2px;
-          box-shadow: 0 0 12px rgba(37, 99, 235, 0.8);
-          animation: dotPulse 2s ease-in-out infinite;
+          margin-left: 4px;
+          margin-bottom: 8px;
+          flex-shrink: 0;
+          box-shadow: 0 0 18px rgba(37,99,235,1), 0 0 36px rgba(37,99,235,0.5);
+          animation: dg 2.5s ease-in-out infinite;
         }
+        @keyframes dg { 0%,100%{box-shadow:0 0 10px rgba(37,99,235,.7),0 0 20px rgba(37,99,235,.3)} 50%{box-shadow:0 0 22px rgba(37,99,235,1),0 0 44px rgba(37,99,235,.6)} }
 
-        @keyframes dotPulse {
-          0%, 100% { box-shadow: 0 0 8px rgba(37, 99, 235, 0.6); }
-          50% { box-shadow: 0 0 20px rgba(37, 99, 235, 1); }
-        }
-
-        .signin-title {
-          font-family: 'Syne', sans-serif;
-          font-size: 28px;
+        .heading {
+          font-size: 32px;
           font-weight: 600;
-          color: #e0e0e0;
-          margin-bottom: 40px;
+          color: #d0d0d0;
+          margin-bottom: 44px;
+          letter-spacing: -0.5px;
         }
 
-        .form-group {
-          margin-bottom: 20px;
-        }
-
-        .form-label {
+        .field { margin-bottom: 24px; }
+        .flabel {
           display: block;
           font-size: 14px;
           font-weight: 500;
-          color: #a0a0a0;
-          margin-bottom: 8px;
-          font-family: 'Inter', sans-serif;
+          color: #888;
+          margin-bottom: 9px;
         }
-
-        .input-wrapper {
-          position: relative;
-        }
-
-        .form-input {
+        .iwrap { position: relative; }
+        .finput {
           width: 100%;
-          height: 52px;
-          padding: 0 16px;
-          background: rgba(255, 255, 255, 0.04);
-          border: 1px solid rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-          color: #ffffff;
+          height: 56px;
+          padding: 0 18px;
+          background: rgba(255,255,255,0.055);
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 12px;
+          color: #fff;
           font-size: 15px;
-          font-family: 'Inter', sans-serif;
+          font-family: 'Outfit', sans-serif;
+          font-weight: 400;
           outline: none;
-          transition: all 0.2s ease;
+          transition: border-color .2s, background .2s, box-shadow .2s;
         }
-
-        .form-input::placeholder {
-          color: rgba(255,255,255,0.2);
+        .finput::placeholder { color: rgba(255,255,255,0.18); }
+        .finput:focus {
+          border-color: rgba(37,99,235,0.7);
+          background: rgba(255,255,255,0.08);
+          box-shadow: 0 0 0 3px rgba(37,99,235,0.12);
         }
+        .finput.pw { padding-right: 52px; }
 
-        .form-input:focus {
-          border-color: rgba(37, 99, 235, 0.6);
-          background: rgba(255, 255, 255, 0.06);
-          box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
-        }
-
-        .form-input.has-icon {
-          padding-right: 48px;
-        }
-
-        .eye-btn {
+        .eyebtn {
           position: absolute;
-          right: 14px;
-          top: 50%;
+          right: 16px; top: 50%;
           transform: translateY(-50%);
-          background: none;
-          border: none;
+          background: none; border: none;
           cursor: pointer;
-          color: rgba(255,255,255,0.3);
-          display: flex;
-          align-items: center;
-          padding: 4px;
-          transition: color 0.2s;
+          color: rgba(255,255,255,0.25);
+          display: flex; padding: 4px;
+          transition: color .2s;
         }
+        .eyebtn:hover { color: rgba(255,255,255,0.6); }
 
-        .eye-btn:hover {
-          color: rgba(255,255,255,0.7);
-        }
-
-        .forgot-link {
-          display: block;
-          text-align: left;
-          margin-top: 8px;
-          font-size: 13px;
+        .forgot {
+          display: inline-block;
+          margin-top: 9px;
+          font-size: 13.5px;
           color: #2563eb;
           text-decoration: none;
-          font-family: 'Inter', sans-serif;
-          transition: color 0.2s;
+          font-weight: 500;
+          transition: color .2s;
         }
+        .forgot:hover { color: #60a5fa; }
 
-        .forgot-link:hover {
-          color: #3b82f6;
-        }
-
-        .error-box {
-          display: flex;
-          align-items: center;
-          gap: 8px;
+        .errbox {
+          display: flex; align-items: center; gap: 8px;
           padding: 12px 16px;
-          background: rgba(239, 68, 68, 0.1);
-          border: 1px solid rgba(239, 68, 68, 0.3);
+          background: rgba(239,68,68,0.1);
+          border: 1px solid rgba(239,68,68,0.25);
           border-radius: 10px;
           color: #f87171;
           font-size: 13px;
           margin-bottom: 20px;
-          font-family: 'Inter', sans-serif;
         }
 
-        .login-btn {
-          width: 100%;
-          height: 52px;
+        .submitbtn {
+          width: 100%; height: 56px;
+          margin-top: 12px;
           background: #2563eb;
-          color: white;
-          border: none;
-          border-radius: 10px;
-          font-size: 16px;
-          font-weight: 600;
-          font-family: 'Syne', sans-serif;
+          color: #fff; border: none;
+          border-radius: 12px;
+          font-size: 17px; font-weight: 700;
+          font-family: 'Outfit', sans-serif;
+          letter-spacing: 0.3px;
           cursor: pointer;
-          transition: all 0.2s ease;
-          position: relative;
-          overflow: hidden;
-          letter-spacing: 0.5px;
-          margin-top: 8px;
+          position: relative; overflow: hidden;
+          transition: background .2s, transform .15s, box-shadow .2s;
         }
-
-        .login-btn::before {
+        .submitbtn::after {
           content: '';
-          position: absolute;
-          inset: 0;
-          background: linear-gradient(135deg, rgba(255,255,255,0.1) 0%, transparent 100%);
-          opacity: 0;
-          transition: opacity 0.2s;
+          position: absolute; inset: 0;
+          background: linear-gradient(180deg, rgba(255,255,255,0.09) 0%, transparent 100%);
+          pointer-events: none;
         }
-
-        .login-btn:hover::before {
-          opacity: 1;
-        }
-
-        .login-btn:hover {
+        .submitbtn:hover:not(:disabled) {
           background: #1d4ed8;
           transform: translateY(-1px);
-          box-shadow: 0 8px 25px rgba(37, 99, 235, 0.4);
+          box-shadow: 0 12px 32px rgba(37,99,235,0.5);
         }
+        .submitbtn:active:not(:disabled) { transform: translateY(0); }
+        .submitbtn:disabled { opacity: 0.55; cursor: not-allowed; }
 
-        .login-btn:active {
-          transform: translateY(0);
-        }
-
-        .login-btn:disabled {
-          opacity: 0.6;
-          cursor: not-allowed;
-          transform: none;
-        }
-
-        .spinner {
+        .spin {
           display: inline-block;
-          width: 18px;
-          height: 18px;
+          width: 18px; height: 18px;
           border: 2px solid rgba(255,255,255,0.3);
-          border-top-color: white;
+          border-top-color: #fff;
           border-radius: 50%;
-          animation: spin 0.8s linear infinite;
-          vertical-align: middle;
-          margin-right: 8px;
+          animation: sp .7s linear infinite;
+          vertical-align: middle; margin-right: 8px;
         }
+        @keyframes sp { to { transform: rotate(360deg); } }
 
-        @keyframes spin {
-          to { transform: rotate(360deg); }
-        }
-
-        /* Mobile */
         @media (max-width: 768px) {
-          .login-root {
-            grid-template-columns: 1fr;
-          }
-          .left-panel {
-            height: 260px;
-          }
-          .shield-wrapper {
-            width: 180px;
-            height: 180px;
-          }
-          .right-panel {
-            padding: 32px 24px;
-          }
+          .page { grid-template-columns: 1fr; }
+          .left { height: 260px; }
+          .shield-scene { width: 220px; height: 220px; }
+          .shield-backdrop { width: 200px; height: 200px; }
+          .shield-img { width: 140px; height: 140px; }
+          .right { padding: 36px 24px; }
+          .brand { font-size: 40px; }
+          .heading { font-size: 26px; margin-bottom: 32px; }
         }
       `}</style>
 
-      <div className="login-root">
-        {/* Left Panel - Shield Logo */}
-        <div className="left-panel">
-          <div className="grid-lines">
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-            <span></span>
-          </div>
-          <div className="center-line"></div>
-
-          <div className="logo-container">
-            <div className="shield-wrapper">
-              <div className="shield-glow"></div>
-              <img
-                src="/cautio_shield.webp"
-                alt="Cautio Shield"
-                className="shield-img"
-              />
-            </div>
+      <div className="page">
+        <div className="left">
+          <div className="vlines"></div>
+          <div className="hline"></div>
+          <div className="vline-center"></div>
+          <div className="ambient"></div>
+          <div className="shield-scene">
+            <div className="shield-backdrop"></div>
+            <img src="/cautio_shield.webp" alt="Cautio Shield" className="shield-img" />
           </div>
         </div>
 
-        {/* Right Panel - Form */}
-        <div className="right-panel">
-          <div className="form-container">
-            {/* Brand */}
-            <div className="brand-name">
-              cautio<span className="dot"></span>
-            </div>
-
-            <div className="signin-title">Sign in</div>
+        <div className="right">
+          <div className="form-box">
+            <div className="brand">cautio<span className="brand-dot"></span></div>
+            <div className="heading">Sign in</div>
 
             <form onSubmit={handleLogin}>
-              {/* Email */}
-              <div className="form-group">
-                <label className="form-label">Email</label>
-                <div className="input-wrapper">
-                  <input
-                    type="email"
-                    className="form-input"
-                    placeholder="example@gmail.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
+              <div className="field">
+                <label className="flabel">Email</label>
+                <div className="iwrap">
+                  <input type="email" className="finput" placeholder="example@gmail.com"
+                    value={email} onChange={e => setEmail(e.target.value)} required disabled={loading} />
                 </div>
               </div>
 
-              {/* Password */}
-              <div className="form-group">
-                <label className="form-label">Password</label>
-                <div className="input-wrapper">
-                  <input
-                    type={showPassword ? 'text' : 'password'}
-                    className="form-input has-icon"
-                    placeholder="Password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    disabled={loading}
-                  />
-                  <button
-                    type="button"
-                    className="eye-btn"
-                    onClick={() => setShowPassword(!showPassword)}
-                  >
-                    {showPassword
-                      ? <EyeOff size={18} />
-                      : <Eye size={18} />
-                    }
+              <div className="field">
+                <label className="flabel">Password</label>
+                <div className="iwrap">
+                  <input type={showPassword ? 'text' : 'password'} className="finput pw"
+                    placeholder="Password" value={password}
+                    onChange={e => setPassword(e.target.value)} required disabled={loading} />
+                  <button type="button" className="eyebtn" onClick={() => setShowPassword(!showPassword)}>
+                    {showPassword ? <EyeOff size={18}/> : <Eye size={18}/>}
                   </button>
                 </div>
-                <a href="#" className="forgot-link">Forgot Password?</a>
+                <a href="#" className="forgot">Forgot Password?</a>
               </div>
 
-              {/* Error */}
-              {error && (
-                <div className="error-box">
-                  <AlertCircle size={16} />
-                  {error}
-                </div>
-              )}
+              {error && <div className="errbox"><AlertCircle size={16}/>{error}</div>}
 
-              {/* Submit */}
-              <button
-                type="submit"
-                className="login-btn"
-                disabled={loading}
-              >
-                {loading
-                  ? <><span className="spinner"></span>Signing in...</>
-                  : 'Login'
-                }
+              <button type="submit" className="submitbtn" disabled={loading}>
+                {loading ? <><span className="spin"></span>Signing in...</> : 'Login'}
               </button>
             </form>
           </div>
