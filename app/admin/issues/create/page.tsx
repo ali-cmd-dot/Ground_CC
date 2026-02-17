@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -8,7 +8,6 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, Save, MapPin } from 'lucide-react'
-import { useEffect } from 'react'
 
 interface Technician {
   id: string
@@ -23,13 +22,16 @@ export default function CreateIssuePage() {
   const [locationLoading, setLocationLoading] = useState(false)
   
   const [formData, setFormData] = useState({
-    vehicle_number: '',
-    client_name: '',
-    client_phone: '',
-    issue_description: '',
+    vehicle_no: '',
+    client: '',
+    poc_name: '',
+    poc_number: '',
+    issue: '',
+    city: '',
     location: '',
     latitude: 0,
     longitude: 0,
+    availability: '',
     priority: 'medium',
     assigned_to: ''
   })
@@ -110,12 +112,12 @@ export default function CreateIssuePage() {
                 <h3 className="font-semibold">Vehicle Details</h3>
                 
                 <div>
-                  <Label htmlFor="vehicle_number">Vehicle Number *</Label>
+                  <Label htmlFor="vehicle_no">Vehicle Number *</Label>
                   <Input
-                    id="vehicle_number"
-                    value={formData.vehicle_number}
-                    onChange={(e) => setFormData({...formData, vehicle_number: e.target.value})}
-                    placeholder="DL-01-AB-1234"
+                    id="vehicle_no"
+                    value={formData.vehicle_no}
+                    onChange={(e) => setFormData({...formData, vehicle_no: e.target.value})}
+                    placeholder="MH01AB1234"
                     required
                   />
                 </div>
@@ -126,25 +128,36 @@ export default function CreateIssuePage() {
                 <h3 className="font-semibold">Client Details</h3>
                 
                 <div>
-                  <Label htmlFor="client_name">Client Name *</Label>
+                  <Label htmlFor="client">Client Name *</Label>
                   <Input
-                    id="client_name"
-                    value={formData.client_name}
-                    onChange={(e) => setFormData({...formData, client_name: e.target.value})}
-                    placeholder="John Doe"
+                    id="client"
+                    value={formData.client}
+                    onChange={(e) => setFormData({...formData, client: e.target.value})}
+                    placeholder="Baba Travels"
                     required
                   />
                 </div>
 
-                <div>
-                  <Label htmlFor="client_phone">Client Phone *</Label>
-                  <Input
-                    id="client_phone"
-                    value={formData.client_phone}
-                    onChange={(e) => setFormData({...formData, client_phone: e.target.value})}
-                    placeholder="+91 98765 43210"
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="poc_name">POC Name</Label>
+                    <Input
+                      id="poc_name"
+                      value={formData.poc_name}
+                      onChange={(e) => setFormData({...formData, poc_name: e.target.value})}
+                      placeholder="RAVI"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="poc_number">POC Number</Label>
+                    <Input
+                      id="poc_number"
+                      value={formData.poc_number}
+                      onChange={(e) => setFormData({...formData, poc_number: e.target.value})}
+                      placeholder="9876543210"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -153,31 +166,43 @@ export default function CreateIssuePage() {
                 <h3 className="font-semibold">Issue Details</h3>
                 
                 <div>
-                  <Label htmlFor="issue_description">Issue Description *</Label>
+                  <Label htmlFor="issue">Issue Description *</Label>
                   <textarea
-                    id="issue_description"
-                    value={formData.issue_description}
-                    onChange={(e) => setFormData({...formData, issue_description: e.target.value})}
-                    placeholder="Describe the issue in detail..."
+                    id="issue"
+                    value={formData.issue}
+                    onChange={(e) => setFormData({...formData, issue: e.target.value})}
+                    placeholder="Device offline issue"
                     className="w-full min-h-[100px] px-3 py-2 border rounded-md"
                     required
                   />
                 </div>
 
-                <div>
-                  <Label htmlFor="priority">Priority *</Label>
-                  <select
-                    id="priority"
-                    value={formData.priority}
-                    onChange={(e) => setFormData({...formData, priority: e.target.value})}
-                    className="w-full h-10 px-3 border rounded-md"
-                    required
-                  >
-                    <option value="low">Low</option>
-                    <option value="medium">Medium</option>
-                    <option value="high">High</option>
-                    <option value="urgent">Urgent</option>
-                  </select>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="priority">Priority *</Label>
+                    <select
+                      id="priority"
+                      value={formData.priority}
+                      onChange={(e) => setFormData({...formData, priority: e.target.value})}
+                      className="w-full h-10 px-3 border rounded-md"
+                      required
+                    >
+                      <option value="low">Low</option>
+                      <option value="medium">Medium</option>
+                      <option value="high">High</option>
+                      <option value="urgent">Urgent</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="availability">Availability</Label>
+                    <Input
+                      id="availability"
+                      value={formData.availability}
+                      onChange={(e) => setFormData({...formData, availability: e.target.value})}
+                      placeholder="9am to 7pm"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -185,15 +210,26 @@ export default function CreateIssuePage() {
               <div className="space-y-4">
                 <h3 className="font-semibold">Location</h3>
                 
-                <div>
-                  <Label htmlFor="location">Location Address *</Label>
-                  <Input
-                    id="location"
-                    value={formData.location}
-                    onChange={(e) => setFormData({...formData, location: e.target.value})}
-                    placeholder="Enter address or get GPS location"
-                    required
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <Label htmlFor="city">City</Label>
+                    <Input
+                      id="city"
+                      value={formData.city}
+                      onChange={(e) => setFormData({...formData, city: e.target.value})}
+                      placeholder="Pune"
+                    />
+                  </div>
+
+                  <div>
+                    <Label htmlFor="location">Location/Area</Label>
+                    <Input
+                      id="location"
+                      value={formData.location}
+                      onChange={(e) => setFormData({...formData, location: e.target.value})}
+                      placeholder="Sangamwadi"
+                    />
+                  </div>
                 </div>
 
                 <Button
@@ -203,7 +239,7 @@ export default function CreateIssuePage() {
                   disabled={locationLoading}
                 >
                   <MapPin className="h-4 w-4 mr-2" />
-                  {locationLoading ? 'Getting Location...' : 'Get Current GPS Location'}
+                  {locationLoading ? 'Getting Location...' : 'Get GPS Coordinates'}
                 </Button>
 
                 {formData.latitude !== 0 && (
