@@ -116,6 +116,25 @@ export default function TechnicianDashboard() {
     }
   }
 
+  const handleStartIssue = async (issueId: string) => {
+    try {
+      const { error } = await supabase
+        .from('issues')
+        .update({
+          status: 'in-progress',
+          started_at: new Date().toISOString()
+        })
+        .eq('id', issueId)
+
+      if (error) throw error
+
+      alert('Issue started!')
+      fetchAssignedIssues(technicianId)
+    } catch (error: any) {
+      alert('Error: ' + error.message)
+    }
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -191,8 +210,8 @@ export default function TechnicianDashboard() {
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-3">
                       <div>
-                        <h3 className="font-semibold text-lg">{issue.vehicle_number}</h3>
-                        <p className="text-sm text-muted-foreground">{issue.client_name}</p>
+                        <h3 className="font-semibold text-lg">{issue.vehicle_no}</h3>
+                        <p className="text-sm text-muted-foreground">{issue.client}</p>
                       </div>
                       <div className="flex flex-col gap-2">
                         <span className={`text-xs px-2 py-1 rounded-full text-white ${getStatusColor(issue.status)}`}>
@@ -205,11 +224,23 @@ export default function TechnicianDashboard() {
                     </div>
 
                     <div className="space-y-2 mb-4">
-                      <div className="flex items-center text-sm text-muted-foreground">
-                        <MapPin className="h-4 w-4 mr-2" />
-                        {issue.location}
-                      </div>
-                      <p className="text-sm">{issue.issue_description}</p>
+                      {issue.city && (
+                        <div className="flex items-center text-sm text-muted-foreground">
+                          <MapPin className="h-4 w-4 mr-2" />
+                          {issue.city} {issue.location && `- ${issue.location}`}
+                        </div>
+                      )}
+                      {issue.poc_name && (
+                        <p className="text-sm text-muted-foreground">
+                          POC: {issue.poc_name} • {issue.poc_number}
+                        </p>
+                      )}
+                      <p className="text-sm">{issue.issue}</p>
+                      {issue.availability && (
+                        <p className="text-xs text-blue-600">
+                          Available: {issue.availability}
+                        </p>
+                      )}
                     </div>
 
                     <div className="flex gap-2">
@@ -222,7 +253,12 @@ export default function TechnicianDashboard() {
                         Camera
                       </Button>
                       {issue.status === 'assigned' && (
-                        <Button size="sm" variant="default" className="flex-1">
+                        <Button 
+                          size="sm" 
+                          variant="default" 
+                          className="flex-1"
+                          onClick={() => handleStartIssue(issue.id)}
+                        >
                           <PlayCircle className="h-4 w-4 mr-2" />
                           Start
                         </Button>
