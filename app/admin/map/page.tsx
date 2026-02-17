@@ -153,15 +153,14 @@ export default function LiveMapPage() {
   }
 
   const initMap = async () => {
-    if (!mapContainerRef.current || !myLocation || mapLoaded) return
+  if (!mapContainerRef.current || !myLocation || mapLoaded) return
 
-    try {
-      const L = (await import('leaflet')).default
-      await import('leaflet/dist/leaflet.css')
+  try {
+    const L = (await import('leaflet')).default
 
-      if (mapRef.current) {
-        mapRef.current.remove()
-      }
+    if (mapRef.current) {
+      mapRef.current.remove()
+    }
 
       const map = L.map(mapContainerRef.current).setView([myLocation.lat, myLocation.lng], 10)
 
