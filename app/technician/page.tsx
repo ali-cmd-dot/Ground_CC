@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { 
   MapPin, Camera, LogOut, CheckCircle, PlayCircle,
-  Navigation, RefreshCw, Phone, Locate
+  Navigation, RefreshCw, Phone, Locate, Route
 } from 'lucide-react'
 import type { Issue } from '@/lib/types'
 import { getStatusColor, getPriorityColor } from '@/lib/utils'
@@ -28,8 +28,13 @@ export default function TechnicianDashboard() {
 
   useEffect(() => {
     checkAuth()
-    getCurrentLocation()
   }, [])
+
+  useEffect(() => {
+    if (technicianId) {
+      getCurrentLocation()
+    }
+  }, [technicianId])
 
   useEffect(() => {
     if (myLocation && technicianId) {
@@ -38,7 +43,7 @@ export default function TechnicianDashboard() {
   }, [myLocation, technicianId])
 
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
-    const R = 6371 // Earth radius in km
+    const R = 6371
     const dLat = (lat2 - lat1) * Math.PI / 180
     const dLon = (lon2 - lon1) * Math.PI / 180
     const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
@@ -55,12 +60,16 @@ export default function TechnicianDashboard() {
           setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
           setFetchingLocation(false)
         },
-        () => {
-          alert('Please enable location access to see nearest issues')
+        err => {
+          console.error('Location error:', err)
+          alert('Please enable location access to see nearest issues first')
           setFetchingLocation(false)
         },
-        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       )
+    } else {
+      alert('Your browser does not support geolocation')
+      setFetchingLocation(false)
     }
   }
 
@@ -77,7 +86,6 @@ export default function TechnicianDashboard() {
       .single()
 
     if (tech) setTechnicianName(tech.name)
-
     await checkAttendance(session.user.id)
   }
 
@@ -91,11 +99,12 @@ export default function TechnicianDashboard() {
 
       if (error) throw error
 
-      if (data && myLocation) {
+      if (data) {
         // Calculate distance for each issue
-        const withDistance = data.map(issue => {
-          let distance = 9999
-          if (issue.latitude && issue.longitude) {
+        const withDistance: IssueWithDistance[] = data.map(issue => {
+          let distance = 999999
+          
+          if (myLocation && issue.latitude && issue.longitude) {
             distance = calculateDistance(
               myLocation.lat,
               myLocation.lng,
@@ -103,14 +112,25 @@ export default function TechnicianDashboard() {
               issue.longitude
             )
           }
+          
           return { ...issue, distance }
         })
 
         // Sort by distance (nearest first)
-        withDistance.sort((a, b) => (a.distance || 9999) - (b.distance || 9999))
+        withDistance.sort((a, b) => {
+          const distA = a.distance ?? 999999
+          const distB = b.distance ?? 999999
+          return distA - distB
+        })
+
+        console.log('Sorted issues:', withDistance.map(i => ({
+          vehicle: i.vehicle_no,
+          distance: i.distance,
+          lat: i.latitude,
+          lng: i.longitude
+        })))
+
         setIssues(withDistance)
-      } else {
-        setIssues(data || [])
       }
     } catch (error) {
       console.error('Error:', error)
@@ -133,8 +153,8 @@ export default function TechnicianDashboard() {
 
   const handleCheckIn = async () => {
     if (!myLocation) {
-      getCurrentLocation()
       alert('Getting your location...')
+      getCurrentLocation()
       return
     }
 
@@ -149,6 +169,8 @@ export default function TechnicianDashboard() {
     if (!error) {
       setIsCheckedIn(true)
       alert('Checked in successfully!')
+    } else {
+      alert('Check-in failed: ' + error.message)
     }
   }
 
@@ -191,6 +213,41 @@ export default function TechnicianDashboard() {
     } else if (issue.city || issue.location) {
       const query = `${issue.location || ''} ${issue.city || ''}`.trim()
       window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank')
+    } else {
+      alert('Location not available for this issue')
+    }
+  }
+
+  // NEW: Navigate all issues in order
+  const handleNavigateAll = () => {
+    if (!myLocation) {
+      alert('Please enable location first')
+      return
+    }
+
+    const issuesWithCoords = issues.filter(i => i.latitude && i.longitude)
+    
+    if (issuesWithCoords.length === 0) {
+      alert('No issues have GPS coordinates')
+      return
+    }
+
+    // Build Google Maps URL with multiple waypoints
+    const origin = `${myLocation.lat},${myLocation.lng}`
+    
+    if (issuesWithCoords.length === 1) {
+      // Single destination
+      const dest = `${issuesWithCoords[0].latitude},${issuesWithCoords[0].longitude}`
+      window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`, '_blank')
+    } else {
+      // Multiple waypoints
+      const waypoints = issuesWithCoords.slice(0, -1).map(i => `${i.latitude},${i.longitude}`).join('|')
+      const destination = `${issuesWithCoords[issuesWithCoords.length - 1].latitude},${issuesWithCoords[issuesWithCoords.length - 1].longitude}`
+      
+      window.open(
+        `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&waypoints=${waypoints}&travelmode=driving`,
+        '_blank'
+      )
     }
   }
 
@@ -225,7 +282,7 @@ export default function TechnicianDashboard() {
             </div>
             <div className="flex gap-2">
               <Button onClick={getCurrentLocation} variant="outline" size="sm" disabled={fetchingLocation}>
-                <Locate className="h-4 w-4" />
+                <Locate className={`h-4 w-4 ${fetchingLocation ? 'animate-spin' : ''}`} />
               </Button>
               <Button onClick={() => fetchAndSortIssues()} variant="outline" size="sm">
                 <RefreshCw className="h-4 w-4" />
@@ -242,20 +299,30 @@ export default function TechnicianDashboard() {
         {/* Location Status */}
         {myLocation ? (
           <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm">
-            <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
-              <MapPin className="h-4 w-4" />
-              <span className="font-medium">Location active</span>
-              <span className="text-xs">• Issues sorted by nearest first</span>
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
+                <MapPin className="h-4 w-4" />
+                <span className="font-medium">Location active</span>
+                <span className="text-xs">• {myLocation.lat.toFixed(4)}, {myLocation.lng.toFixed(4)}</span>
+              </div>
+              {issues.filter(i => i.latitude && i.longitude).length > 0 && (
+                <Button size="sm" onClick={handleNavigateAll} className="h-7 text-xs">
+                  <Route className="h-3 w-3 mr-1" />
+                  Route All
+                </Button>
+              )}
             </div>
           </div>
         ) : (
-          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-3">
             <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300 text-sm">
+              <div className="flex items-center gap-2 text-red-700 dark:text-red-300 text-sm">
                 <Locate className="h-4 w-4" />
-                <span>Location needed to sort by nearest</span>
+                <span className="font-medium">Location required to sort by nearest</span>
               </div>
-              <Button size="sm" onClick={getCurrentLocation}>Enable</Button>
+              <Button size="sm" onClick={getCurrentLocation} disabled={fetchingLocation}>
+                {fetchingLocation ? 'Getting...' : 'Enable GPS'}
+              </Button>
             </div>
           </div>
         )}
@@ -305,7 +372,11 @@ export default function TechnicianDashboard() {
         <div>
           <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
             Today's Tasks ({issues.length})
-            {myLocation && <span className="text-xs font-normal text-green-600">• Sorted by nearest first</span>}
+            {myLocation && issues.some(i => i.distance && i.distance < 999999) && (
+              <span className="text-xs font-normal text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full">
+                Sorted by nearest first ✓
+              </span>
+            )}
           </h2>
 
           {issues.length === 0 ? (
@@ -328,7 +399,7 @@ export default function TechnicianDashboard() {
                     {/* Ranking Badge */}
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div className="bg-blue-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                        <div className={`${idx === 0 ? 'bg-green-500' : 'bg-blue-500'} text-white text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center shadow-md`}>
                           #{idx + 1}
                         </div>
                         <div className="flex-1">
@@ -347,14 +418,15 @@ export default function TechnicianDashboard() {
                     </div>
 
                     {/* Distance Badge */}
-                    {issue.distance !== undefined && issue.distance < 9999 && (
-                      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md px-3 py-2 mb-3">
-                        <p className="text-sm font-semibold text-green-700 dark:text-green-300 flex items-center gap-2">
-                          <MapPin className="h-4 w-4" />
+                    {issue.distance !== undefined && issue.distance < 999999 && (
+                      <div className={`${idx === 0 ? 'bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700' : 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800'} border rounded-md px-3 py-2 mb-3`}>
+                        <p className={`text-sm font-bold ${idx === 0 ? 'text-green-700 dark:text-green-300' : 'text-blue-700 dark:text-blue-300'} flex items-center gap-2`}>
+                          <Navigation className="h-4 w-4" />
                           {issue.distance < 1 
                             ? `${(issue.distance * 1000).toFixed(0)} meters away` 
-                            : `${issue.distance.toFixed(1)} km away`}
-                          <span className="text-xs opacity-75">• {idx === 0 ? 'Nearest!' : `#${idx + 1} nearest`}</span>
+                            : `${issue.distance.toFixed(2)} km away`}
+                          {idx === 0 && <span className="text-xs">• NEAREST! Go here first</span>}
+                          {idx > 0 && <span className="text-xs opacity-75">• Stop #{idx + 1}</span>}
                         </p>
                       </div>
                     )}
