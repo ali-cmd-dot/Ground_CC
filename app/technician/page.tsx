@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { 
   MapPin, Camera, LogOut, CheckCircle, PlayCircle,
-  Navigation, RefreshCw, Phone, Locate, Map
+  Navigation, RefreshCw, Phone, Locate, Map, AlertCircle
 } from 'lucide-react'
 import type { Issue } from '@/lib/types'
 import { getStatusColor, getPriorityColor } from '@/lib/utils'
@@ -39,6 +39,8 @@ export default function TechnicianDashboard() {
   useEffect(() => {
     if (myLocation && technicianId) {
       fetchAndSortIssues()
+    } else if (technicianId) {
+      fetchAndSortIssues()
     }
   }, [myLocation, technicianId])
 
@@ -57,34 +59,26 @@ export default function TechnicianDashboard() {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         pos => {
-          setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+          const newLocation = { lat: pos.coords.latitude, lng: pos.coords.longitude }
+          console.log('Current location:', newLocation)
+          setMyLocation(newLocation)
           setFetchingLocation(false)
         },
         err => {
           console.error('Location error:', err)
-          alert('Please enable location access to see nearest issues first')
+          alert('Please enable location access')
           setFetchingLocation(false)
         },
         { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
       )
-    } else {
-      alert('Your browser does not support geolocation')
-      setFetchingLocation(false)
     }
   }
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
-
     setTechnicianId(session.user.id)
-
-    const { data: tech } = await supabase
-      .from('technicians')
-      .select('*')
-      .eq('id', session.user.id)
-      .single()
-
+    const { data: tech } = await supabase.from('technicians').select('*').eq('id', session.user.id).single()
     if (tech) setTechnicianName(tech.name)
     await checkAttendance(session.user.id)
   }
@@ -100,32 +94,40 @@ export default function TechnicianDashboard() {
       if (error) throw error
 
       if (data) {
+        console.log('Raw issues:', data)
+        
         const withDistance: IssueWithDistance[] = data.map(issue => {
           let distance = 999999
           
-          if (myLocation && issue.latitude && issue.longitude) {
-            distance = calculateDistance(
-              myLocation.lat,
-              myLocation.lng,
-              issue.latitude,
-              issue.longitude
-            )
+          // Check if issue has GPS coordinates
+          if (issue.latitude && issue.longitude) {
+            if (myLocation) {
+              distance = calculateDistance(
+                myLocation.lat,
+                myLocation.lng,
+                issue.latitude,
+                issue.longitude
+              )
+              console.log(`Issue ${issue.vehicle_no}: Distance = ${distance.toFixed(2)}km`)
+            }
+          } else {
+            console.warn(`Issue ${issue.vehicle_no}: No GPS coordinates (lat: ${issue.latitude}, lng: ${issue.longitude})`)
           }
           
           return { ...issue, distance }
         })
 
+        // Sort by distance
         withDistance.sort((a, b) => {
           const distA = a.distance ?? 999999
           const distB = b.distance ?? 999999
           return distA - distB
         })
 
-        console.log('Sorted issues:', withDistance.map(i => ({
+        console.log('Sorted issues by distance:', withDistance.map(i => ({
           vehicle: i.vehicle_no,
           distance: i.distance,
-          lat: i.latitude,
-          lng: i.longitude
+          hasGPS: !!(i.latitude && i.longitude)
         })))
 
         setIssues(withDistance)
@@ -139,13 +141,8 @@ export default function TechnicianDashboard() {
 
   const checkAttendance = async (id: string) => {
     const today = new Date().toISOString().split('T')[0]
-    const { data } = await supabase
-      .from('attendance')
-      .select('*')
-      .eq('technician_id', id)
-      .eq('date', today)
-      .is('check_out', null)
-      .single()
+    const { data } = await supabase.from('attendance').select('*')
+      .eq('technician_id', id).eq('date', today).is('check_out', null).single()
     setIsCheckedIn(!!data)
   }
 
@@ -155,7 +152,6 @@ export default function TechnicianDashboard() {
       getCurrentLocation()
       return
     }
-
     const today = new Date().toISOString().split('T')[0]
     const { error } = await supabase.from('attendance').insert({
       technician_id: technicianId,
@@ -166,36 +162,28 @@ export default function TechnicianDashboard() {
     })
     if (!error) {
       setIsCheckedIn(true)
-      alert('Checked in successfully!')
-    } else {
-      alert('Check-in failed: ' + error.message)
+      alert('Checked in!')
     }
   }
 
   const handleCheckOut = async () => {
     const today = new Date().toISOString().split('T')[0]
-    const { data } = await supabase
-      .from('attendance')
-      .select('*')
-      .eq('technician_id', technicianId)
-      .eq('date', today)
-      .is('check_out', null)
-      .single()
-
+    const { data } = await supabase.from('attendance').select('*')
+      .eq('technician_id', technicianId).eq('date', today).is('check_out', null).single()
     if (data) {
       const hours = (Date.now() - new Date(data.check_in).getTime()) / 3600000
-      await supabase.from('attendance')
-        .update({ check_out: new Date().toISOString(), total_hours: hours })
-        .eq('id', data.id)
+      await supabase.from('attendance').update({ 
+        check_out: new Date().toISOString(), 
+        total_hours: hours 
+      }).eq('id', data.id)
       setIsCheckedIn(false)
-      alert(`Checked out! Total hours: ${hours.toFixed(2)}`)
+      alert(`Checked out! Hours: ${hours.toFixed(2)}`)
     }
   }
 
   const handleStartIssue = async (e: React.MouseEvent, issueId: string) => {
     e.stopPropagation()
-    const { error } = await supabase
-      .from('issues')
+    const { error } = await supabase.from('issues')
       .update({ status: 'in-progress', started_at: new Date().toISOString() })
       .eq('id', issueId)
     if (!error) {
@@ -211,8 +199,6 @@ export default function TechnicianDashboard() {
     } else if (issue.city || issue.location) {
       const query = `${issue.location || ''} ${issue.city || ''}`.trim()
       window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank')
-    } else {
-      alert('Location not available for this issue')
     }
   }
 
@@ -221,23 +207,18 @@ export default function TechnicianDashboard() {
       alert('Please enable location first')
       return
     }
-
     const issuesWithCoords = issues.filter(i => i.latitude && i.longitude)
-    
     if (issuesWithCoords.length === 0) {
       alert('No issues have GPS coordinates')
       return
     }
-
     const origin = `${myLocation.lat},${myLocation.lng}`
-    
     if (issuesWithCoords.length === 1) {
       const dest = `${issuesWithCoords[0].latitude},${issuesWithCoords[0].longitude}`
       window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`, '_blank')
     } else {
       const waypoints = issuesWithCoords.slice(0, -1).map(i => `${i.latitude},${i.longitude}`).join('|')
       const destination = `${issuesWithCoords[issuesWithCoords.length - 1].latitude},${issuesWithCoords[issuesWithCoords.length - 1].longitude}`
-      
       window.open(
         `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${destination}&waypoints=${waypoints}&travelmode=driving`,
         '_blank'
@@ -249,6 +230,9 @@ export default function TechnicianDashboard() {
     await supabase.auth.signOut()
     router.push('/login')
   }
+
+  const issuesWithGPS = issues.filter(i => i.latitude && i.longitude).length
+  const issuesWithoutGPS = issues.length - issuesWithGPS
 
   if (loading) {
     return (
@@ -274,6 +258,11 @@ export default function TechnicianDashboard() {
               </div>
             </div>
             <div className="flex gap-2">
+              {issuesWithGPS > 0 && (
+                <Button onClick={() => router.push('/technician/map')} variant="outline" size="sm">
+                  <Map className="h-4 w-4" />
+                </Button>
+              )}
               <Button onClick={getCurrentLocation} variant="outline" size="sm" disabled={fetchingLocation}>
                 <Locate className={`h-4 w-4 ${fetchingLocation ? 'animate-spin' : ''}`} />
               </Button>
@@ -294,13 +283,11 @@ export default function TechnicianDashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
                 <MapPin className="h-4 w-4" />
-                <span className="font-medium">Location active</span>
-                <span className="text-xs">• {myLocation.lat.toFixed(4)}, {myLocation.lng.toFixed(4)}</span>
+                <span className="font-medium">Location: {myLocation.lat.toFixed(4)}, {myLocation.lng.toFixed(4)}</span>
               </div>
-              {issues.filter(i => i.latitude && i.longitude).length > 0 && (
+              {issuesWithGPS > 0 && (
                 <Button size="sm" onClick={handleNavigateAll} className="h-7 text-xs">
-                  <Map className="h-3 w-3 mr-1" />
-                  Route All
+                  <Map className="h-3 w-3 mr-1" />Route All
                 </Button>
               )}
             </div>
@@ -310,11 +297,20 @@ export default function TechnicianDashboard() {
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2 text-red-700 dark:text-red-300 text-sm">
                 <Locate className="h-4 w-4" />
-                <span className="font-medium">Location required to sort by nearest</span>
+                <span className="font-medium">Location OFF - Cannot sort by nearest</span>
               </div>
               <Button size="sm" onClick={getCurrentLocation} disabled={fetchingLocation}>
-                {fetchingLocation ? 'Getting...' : 'Enable GPS'}
+                {fetchingLocation ? 'Getting...' : 'Enable'}
               </Button>
+            </div>
+          </div>
+        )}
+
+        {issuesWithoutGPS > 0 && (
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+            <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300 text-sm">
+              <AlertCircle className="h-4 w-4" />
+              <span>{issuesWithoutGPS} issue(s) missing GPS coordinates - cannot calculate distance</span>
             </div>
           </div>
         )}
@@ -326,11 +322,8 @@ export default function TechnicianDashboard() {
                 <p className="text-sm opacity-80">Attendance Status</p>
                 <p className="text-2xl font-bold mt-0.5">{isCheckedIn ? '✓ Checked In' : 'Not Checked In'}</p>
               </div>
-              <Button
-                onClick={isCheckedIn ? handleCheckOut : handleCheckIn}
-                size="lg"
-                className="bg-white text-gray-800 hover:bg-gray-100 font-semibold"
-              >
+              <Button onClick={isCheckedIn ? handleCheckOut : handleCheckIn} size="lg"
+                className="bg-white text-gray-800 hover:bg-gray-100 font-semibold">
                 {isCheckedIn ? 'Check Out' : 'Check In'}
               </Button>
             </div>
@@ -338,82 +331,70 @@ export default function TechnicianDashboard() {
         </Card>
 
         <div className="grid grid-cols-3 gap-3">
-          <Card>
-            <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-yellow-500">{issues.filter(i => i.status === 'assigned').length}</p>
-              <p className="text-xs text-muted-foreground mt-1">Pending</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-blue-500">{issues.filter(i => i.status === 'in-progress').length}</p>
-              <p className="text-xs text-muted-foreground mt-1">In Progress</p>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">{issues.length}</p>
-              <p className="text-xs text-muted-foreground mt-1">Total</p>
-            </CardContent>
-          </Card>
+          <Card><CardContent className="pt-4 pb-4 text-center">
+            <p className="text-2xl font-bold text-yellow-500">{issues.filter(i => i.status === 'assigned').length}</p>
+            <p className="text-xs text-muted-foreground mt-1">Pending</p>
+          </CardContent></Card>
+          <Card><CardContent className="pt-4 pb-4 text-center">
+            <p className="text-2xl font-bold text-blue-500">{issues.filter(i => i.status === 'in-progress').length}</p>
+            <p className="text-xs text-muted-foreground mt-1">In Progress</p>
+          </CardContent></Card>
+          <Card><CardContent className="pt-4 pb-4 text-center">
+            <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">{issues.length}</p>
+            <p className="text-xs text-muted-foreground mt-1">Total</p>
+          </CardContent></Card>
         </div>
 
         <div>
           <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
             Today's Tasks ({issues.length})
-            {myLocation && issues.some(i => i.distance && i.distance < 999999) && (
+            {myLocation && issuesWithGPS > 0 && (
               <span className="text-xs font-normal text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full">
-                Sorted by nearest first ✓
+                ✓ Sorted nearest first
               </span>
             )}
           </h2>
 
           {issues.length === 0 ? (
-            <Card>
-              <CardContent className="py-14 text-center">
-                <CheckCircle className="h-14 w-14 text-muted-foreground mx-auto mb-3" />
-                <p className="font-medium text-muted-foreground">No tasks assigned</p>
-                <p className="text-sm text-muted-foreground mt-1">Contact admin for assignments</p>
-              </CardContent>
-            </Card>
+            <Card><CardContent className="py-14 text-center">
+              <CheckCircle className="h-14 w-14 text-muted-foreground mx-auto mb-3" />
+              <p className="font-medium text-muted-foreground">No tasks assigned</p>
+            </CardContent></Card>
           ) : (
             <div className="space-y-4">
               {issues.map((issue, idx) => (
-                <Card
-                  key={issue.id}
-                  className="hover:shadow-md transition-shadow cursor-pointer active:scale-[0.99]"
-                  onClick={() => router.push(`/technician/issues/${issue.id}`)}
-                >
+                <Card key={issue.id} className="hover:shadow-md transition-shadow cursor-pointer"
+                  onClick={() => router.push(`/technician/issues/${issue.id}`)}>
                   <CardContent className="p-4">
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
-                        <div className={`${idx === 0 ? 'bg-green-500' : 'bg-blue-500'} text-white text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center shadow-md`}>
+                        <div className={`${idx === 0 && issue.distance && issue.distance < 999999 ? 'bg-green-500' : 'bg-blue-500'} text-white text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center`}>
                           #{idx + 1}
                         </div>
-                        <div className="flex-1">
+                        <div>
                           <h3 className="font-bold text-lg">{issue.vehicle_no}</h3>
                           <p className="text-sm text-muted-foreground">{issue.client}</p>
                         </div>
                       </div>
                       <div className="flex gap-1.5 flex-col items-end">
-                        <span className={`text-xs px-2 py-0.5 rounded-full text-white font-medium ${getStatusColor(issue.status)}`}>
-                          {issue.status}
-                        </span>
-                        <span className={`text-xs px-2 py-0.5 rounded-full text-white font-medium ${getPriorityColor(issue.priority)}`}>
-                          {issue.priority}
-                        </span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full text-white ${getStatusColor(issue.status)}`}>{issue.status}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full text-white ${getPriorityColor(issue.priority)}`}>{issue.priority}</span>
                       </div>
                     </div>
 
-                    {issue.distance !== undefined && issue.distance < 999999 && (
-                      <div className={`${idx === 0 ? 'bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700' : 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800'} border rounded-md px-3 py-2 mb-3`}>
-                        <p className={`text-sm font-bold ${idx === 0 ? 'text-green-700 dark:text-green-300' : 'text-blue-700 dark:text-blue-300'} flex items-center gap-2`}>
+                    {issue.distance !== undefined && issue.distance < 999999 ? (
+                      <div className={`${idx === 0 ? 'bg-green-100 border-green-300' : 'bg-blue-50 border-blue-200'} border rounded-md px-3 py-2 mb-3`}>
+                        <p className={`text-sm font-bold ${idx === 0 ? 'text-green-700' : 'text-blue-700'} flex items-center gap-2`}>
                           <Navigation className="h-4 w-4" />
-                          {issue.distance < 1 
-                            ? `${(issue.distance * 1000).toFixed(0)} meters away` 
-                            : `${issue.distance.toFixed(2)} km away`}
-                          {idx === 0 && <span className="text-xs">• NEAREST! Go here first</span>}
-                          {idx > 0 && <span className="text-xs opacity-75">• Stop #{idx + 1}</span>}
+                          {issue.distance < 1 ? `${(issue.distance * 1000).toFixed(0)}m away` : `${issue.distance.toFixed(2)}km away`}
+                          {idx === 0 && <span className="text-xs">• NEAREST!</span>}
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="bg-gray-100 border border-gray-300 rounded-md px-3 py-2 mb-3">
+                        <p className="text-xs text-gray-600 flex items-center gap-2">
+                          <AlertCircle className="h-3 w-3" />
+                          No GPS data - distance unknown
                         </p>
                       </div>
                     )}
@@ -421,31 +402,29 @@ export default function TechnicianDashboard() {
                     <div className="space-y-1.5 mb-4">
                       {(issue.city || issue.location) && (
                         <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 flex-shrink-0" />
+                          <MapPin className="h-3.5 w-3.5" />
                           {issue.city}{issue.location && ` - ${issue.location}`}
                         </p>
                       )}
                       {issue.poc_name && (
                         <p className="text-sm text-muted-foreground flex items-center gap-1.5">
-                          <Phone className="h-3.5 w-3.5 flex-shrink-0" />
+                          <Phone className="h-3.5 w-3.5" />
                           {issue.poc_name} {issue.poc_number && `• ${issue.poc_number}`}
                         </p>
                       )}
-                      <p className="text-sm bg-gray-50 dark:bg-gray-800 rounded-md px-3 py-2 mt-2">{issue.issue}</p>
-                      {issue.availability && (
-                        <p className="text-xs text-blue-600 font-medium">Available: {issue.availability}</p>
-                      )}
+                      <p className="text-sm bg-gray-50 dark:bg-gray-800 rounded-md px-3 py-2">{issue.issue}</p>
+                      {issue.availability && <p className="text-xs text-blue-600">Available: {issue.availability}</p>}
                     </div>
 
                     <div className="grid grid-cols-2 gap-2">
-                      <Button size="sm" onClick={(e) => handleNavigate(e, issue)} className="w-full">
+                      <Button size="sm" onClick={(e) => handleNavigate(e, issue)}>
                         <Navigation className="h-4 w-4 mr-2" />Navigate
                       </Button>
-                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); router.push(`/technician/issues/${issue.id}`) }} className="w-full">
+                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); router.push(`/technician/issues/${issue.id}`) }}>
                         <Camera className="h-4 w-4 mr-2" />Camera
                       </Button>
                       {issue.status === 'assigned' && (
-                        <Button size="sm" className="w-full col-span-2 bg-orange-500 hover:bg-orange-600"
+                        <Button size="sm" className="col-span-2 bg-orange-500 hover:bg-orange-600"
                           onClick={(e) => handleStartIssue(e, issue.id)}>
                           <PlayCircle className="h-4 w-4 mr-2" />Start Work
                         </Button>
