@@ -99,7 +99,6 @@ export default function TechnicianDashboard() {
         const withDistance: IssueWithDistance[] = data.map(issue => {
           let distance = 999999
           
-          // Check if issue has GPS coordinates
           if (issue.latitude && issue.longitude) {
             if (myLocation) {
               distance = calculateDistance(
@@ -111,13 +110,12 @@ export default function TechnicianDashboard() {
               console.log(`Issue ${issue.vehicle_no}: Distance = ${distance.toFixed(2)}km`)
             }
           } else {
-            console.warn(`Issue ${issue.vehicle_no}: No GPS coordinates (lat: ${issue.latitude}, lng: ${issue.longitude})`)
+            console.warn(`Issue ${issue.vehicle_no}: No GPS coordinates`)
           }
           
           return { ...issue, distance }
         })
 
-        // Sort by distance
         withDistance.sort((a, b) => {
           const distA = a.distance ?? 999999
           const distB = b.distance ?? 999999
@@ -226,6 +224,15 @@ export default function TechnicianDashboard() {
     }
   }
 
+  const handleMapClick = () => {
+    const issuesWithGPS = issues.filter(i => i.latitude && i.longitude)
+    if (issuesWithGPS.length === 0) {
+      alert('No issues have GPS coordinates yet. Please ask admin to add GPS data.')
+      return
+    }
+    router.push('/technician/map')
+  }
+
   const handleLogout = async () => {
     await supabase.auth.signOut()
     router.push('/login')
@@ -258,11 +265,10 @@ export default function TechnicianDashboard() {
               </div>
             </div>
             <div className="flex gap-2">
-              {issuesWithGPS > 0 && (
-                <Button onClick={() => router.push('/technician/map')} variant="outline" size="sm">
-                  <Map className="h-4 w-4" />
-                </Button>
-              )}
+              {/* MAP BUTTON - ALWAYS VISIBLE NOW */}
+              <Button onClick={handleMapClick} variant="outline" size="sm">
+                <Map className="h-4 w-4" />
+              </Button>
               <Button onClick={getCurrentLocation} variant="outline" size="sm" disabled={fetchingLocation}>
                 <Locate className={`h-4 w-4 ${fetchingLocation ? 'animate-spin' : ''}`} />
               </Button>
