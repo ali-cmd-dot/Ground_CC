@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { 
   MapPin, Camera, LogOut, CheckCircle, PlayCircle,
-  Navigation, RefreshCw, Phone, Locate, Route
+  Navigation, RefreshCw, Phone, Locate, Map
 } from 'lucide-react'
 import type { Issue } from '@/lib/types'
 import { getStatusColor, getPriorityColor } from '@/lib/utils'
@@ -100,7 +100,6 @@ export default function TechnicianDashboard() {
       if (error) throw error
 
       if (data) {
-        // Calculate distance for each issue
         const withDistance: IssueWithDistance[] = data.map(issue => {
           let distance = 999999
           
@@ -116,7 +115,6 @@ export default function TechnicianDashboard() {
           return { ...issue, distance }
         })
 
-        // Sort by distance (nearest first)
         withDistance.sort((a, b) => {
           const distA = a.distance ?? 999999
           const distB = b.distance ?? 999999
@@ -218,7 +216,6 @@ export default function TechnicianDashboard() {
     }
   }
 
-  // NEW: Navigate all issues in order
   const handleNavigateAll = () => {
     if (!myLocation) {
       alert('Please enable location first')
@@ -232,15 +229,12 @@ export default function TechnicianDashboard() {
       return
     }
 
-    // Build Google Maps URL with multiple waypoints
     const origin = `${myLocation.lat},${myLocation.lng}`
     
     if (issuesWithCoords.length === 1) {
-      // Single destination
       const dest = `${issuesWithCoords[0].latitude},${issuesWithCoords[0].longitude}`
       window.open(`https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${dest}&travelmode=driving`, '_blank')
     } else {
-      // Multiple waypoints
       const waypoints = issuesWithCoords.slice(0, -1).map(i => `${i.latitude},${i.longitude}`).join('|')
       const destination = `${issuesWithCoords[issuesWithCoords.length - 1].latitude},${issuesWithCoords[issuesWithCoords.length - 1].longitude}`
       
@@ -269,7 +263,6 @@ export default function TechnicianDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-20">
-      {/* Header */}
       <header className="bg-white dark:bg-gray-800 border-b sticky top-0 z-10">
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
@@ -296,7 +289,6 @@ export default function TechnicianDashboard() {
       </header>
 
       <main className="px-4 py-5 space-y-5 max-w-2xl mx-auto">
-        {/* Location Status */}
         {myLocation ? (
           <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm">
             <div className="flex items-center justify-between">
@@ -307,7 +299,7 @@ export default function TechnicianDashboard() {
               </div>
               {issues.filter(i => i.latitude && i.longitude).length > 0 && (
                 <Button size="sm" onClick={handleNavigateAll} className="h-7 text-xs">
-                  <Route className="h-3 w-3 mr-1" />
+                  <Map className="h-3 w-3 mr-1" />
                   Route All
                 </Button>
               )}
@@ -327,7 +319,6 @@ export default function TechnicianDashboard() {
           </div>
         )}
 
-        {/* Attendance */}
         <Card className={`border-0 text-white ${isCheckedIn ? 'bg-gradient-to-r from-green-500 to-emerald-600' : 'bg-gradient-to-r from-blue-500 to-indigo-600'}`}>
           <CardContent className="pt-5 pb-5">
             <div className="flex items-center justify-between">
@@ -346,7 +337,6 @@ export default function TechnicianDashboard() {
           </CardContent>
         </Card>
 
-        {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           <Card>
             <CardContent className="pt-4 pb-4 text-center">
@@ -368,7 +358,6 @@ export default function TechnicianDashboard() {
           </Card>
         </div>
 
-        {/* Tasks - Sorted by Nearest */}
         <div>
           <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
             Today's Tasks ({issues.length})
@@ -396,7 +385,6 @@ export default function TechnicianDashboard() {
                   onClick={() => router.push(`/technician/issues/${issue.id}`)}
                 >
                   <CardContent className="p-4">
-                    {/* Ranking Badge */}
                     <div className="flex items-start justify-between mb-2">
                       <div className="flex items-center gap-2">
                         <div className={`${idx === 0 ? 'bg-green-500' : 'bg-blue-500'} text-white text-xs font-bold rounded-full w-7 h-7 flex items-center justify-center shadow-md`}>
@@ -417,7 +405,6 @@ export default function TechnicianDashboard() {
                       </div>
                     </div>
 
-                    {/* Distance Badge */}
                     {issue.distance !== undefined && issue.distance < 999999 && (
                       <div className={`${idx === 0 ? 'bg-green-100 border-green-300 dark:bg-green-900/30 dark:border-green-700' : 'bg-blue-50 border-blue-200 dark:bg-blue-900/20 dark:border-blue-800'} border rounded-md px-3 py-2 mb-3`}>
                         <p className={`text-sm font-bold ${idx === 0 ? 'text-green-700 dark:text-green-300' : 'text-blue-700 dark:text-blue-300'} flex items-center gap-2`}>
@@ -431,7 +418,6 @@ export default function TechnicianDashboard() {
                       </div>
                     )}
 
-                    {/* Details */}
                     <div className="space-y-1.5 mb-4">
                       {(issue.city || issue.location) && (
                         <p className="text-sm text-muted-foreground flex items-center gap-1.5">
@@ -451,7 +437,6 @@ export default function TechnicianDashboard() {
                       )}
                     </div>
 
-                    {/* Actions */}
                     <div className="grid grid-cols-2 gap-2">
                       <Button size="sm" onClick={(e) => handleNavigate(e, issue)} className="w-full">
                         <Navigation className="h-4 w-4 mr-2" />Navigate
