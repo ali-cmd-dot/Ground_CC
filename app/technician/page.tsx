@@ -6,36 +6,67 @@ import { supabase } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { 
-  MapPin, 
-  Camera, 
-  LogOut,
-  CheckCircle,
-  PlayCircle,
-  Navigation,
-  RefreshCw,
-  Phone
+  MapPin, Camera, LogOut, CheckCircle, PlayCircle,
+  Navigation, RefreshCw, Phone, Locate
 } from 'lucide-react'
 import type { Issue } from '@/lib/types'
 import { getStatusColor, getPriorityColor } from '@/lib/utils'
 
+interface IssueWithDistance extends Issue {
+  distance?: number
+}
+
 export default function TechnicianDashboard() {
   const router = useRouter()
-  const [issues, setIssues] = useState<Issue[]>([])
+  const [issues, setIssues] = useState<IssueWithDistance[]>([])
   const [loading, setLoading] = useState(true)
   const [technicianId, setTechnicianId] = useState('')
   const [technicianName, setTechnicianName] = useState('')
   const [isCheckedIn, setIsCheckedIn] = useState(false)
+  const [myLocation, setMyLocation] = useState<{ lat: number; lng: number } | null>(null)
+  const [fetchingLocation, setFetchingLocation] = useState(false)
 
   useEffect(() => {
     checkAuth()
+    getCurrentLocation()
   }, [])
+
+  useEffect(() => {
+    if (myLocation && technicianId) {
+      fetchAndSortIssues()
+    }
+  }, [myLocation, technicianId])
+
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371 // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+      Math.sin(dLon/2) * Math.sin(dLon/2)
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+  }
+
+  const getCurrentLocation = () => {
+    setFetchingLocation(true)
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          setMyLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude })
+          setFetchingLocation(false)
+        },
+        () => {
+          alert('Please enable location access to see nearest issues')
+          setFetchingLocation(false)
+        },
+        { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+      )
+    }
+  }
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session) {
-      router.push('/login')
-      return
-    }
+    if (!session) { router.push('/login'); return }
 
     setTechnicianId(session.user.id)
 
@@ -47,20 +78,40 @@ export default function TechnicianDashboard() {
 
     if (tech) setTechnicianName(tech.name)
 
-    await fetchAssignedIssues(session.user.id)
     await checkAttendance(session.user.id)
   }
 
-  const fetchAssignedIssues = async (id: string) => {
+  const fetchAndSortIssues = async () => {
     try {
       const { data, error } = await supabase
         .from('issues')
         .select('*')
-        .eq('assigned_to', id)
+        .eq('assigned_to', technicianId)
         .in('status', ['assigned', 'in-progress'])
-        .order('priority', { ascending: false })
 
-      if (data) setIssues(data)
+      if (error) throw error
+
+      if (data && myLocation) {
+        // Calculate distance for each issue
+        const withDistance = data.map(issue => {
+          let distance = 9999
+          if (issue.latitude && issue.longitude) {
+            distance = calculateDistance(
+              myLocation.lat,
+              myLocation.lng,
+              issue.latitude,
+              issue.longitude
+            )
+          }
+          return { ...issue, distance }
+        })
+
+        // Sort by distance (nearest first)
+        withDistance.sort((a, b) => (a.distance || 9999) - (b.distance || 9999))
+        setIssues(withDistance)
+      } else {
+        setIssues(data || [])
+      }
     } catch (error) {
       console.error('Error:', error)
     } finally {
@@ -81,20 +132,24 @@ export default function TechnicianDashboard() {
   }
 
   const handleCheckIn = async () => {
-    navigator.geolocation.getCurrentPosition(async (position) => {
-      const { latitude, longitude } = position.coords
-      const today = new Date().toISOString().split('T')[0]
-      const { error } = await supabase.from('attendance').insert({
-        technician_id: technicianId,
-        check_in: new Date().toISOString(),
-        latitude, longitude,
-        date: today
-      })
-      if (!error) {
-        setIsCheckedIn(true)
-        alert('Checked in!')
-      }
-    }, () => alert('Location access required for check-in'))
+    if (!myLocation) {
+      getCurrentLocation()
+      alert('Getting your location...')
+      return
+    }
+
+    const today = new Date().toISOString().split('T')[0]
+    const { error } = await supabase.from('attendance').insert({
+      technician_id: technicianId,
+      check_in: new Date().toISOString(),
+      latitude: myLocation.lat,
+      longitude: myLocation.lng,
+      date: today
+    })
+    if (!error) {
+      setIsCheckedIn(true)
+      alert('Checked in successfully!')
+    }
   }
 
   const handleCheckOut = async () => {
@@ -113,7 +168,7 @@ export default function TechnicianDashboard() {
         .update({ check_out: new Date().toISOString(), total_hours: hours })
         .eq('id', data.id)
       setIsCheckedIn(false)
-      alert(`Checked out! Hours: ${hours.toFixed(2)}`)
+      alert(`Checked out! Total hours: ${hours.toFixed(2)}`)
     }
   }
 
@@ -125,7 +180,7 @@ export default function TechnicianDashboard() {
       .eq('id', issueId)
     if (!error) {
       alert('Issue started!')
-      fetchAssignedIssues(technicianId)
+      fetchAndSortIssues()
     }
   }
 
@@ -136,14 +191,7 @@ export default function TechnicianDashboard() {
     } else if (issue.city || issue.location) {
       const query = `${issue.location || ''} ${issue.city || ''}`.trim()
       window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank')
-    } else {
-      alert('Location not available for this issue')
     }
-  }
-
-  const handleCamera = (e: React.MouseEvent, issueId: string) => {
-    e.stopPropagation()
-    router.push(`/technician/issues/${issueId}?tab=camera`)
   }
 
   const handleLogout = async () => {
@@ -172,13 +220,14 @@ export default function TechnicianDashboard() {
               <img src="/cautio_shield.webp" alt="Cautio" className="h-7 w-7" />
               <div>
                 <h1 className="text-lg font-bold leading-tight">My Tasks</h1>
-                {technicianName && (
-                  <p className="text-xs text-muted-foreground">{technicianName}</p>
-                )}
+                {technicianName && <p className="text-xs text-muted-foreground">{technicianName}</p>}
               </div>
             </div>
             <div className="flex gap-2">
-              <Button onClick={() => fetchAssignedIssues(technicianId)} variant="outline" size="sm">
+              <Button onClick={getCurrentLocation} variant="outline" size="sm" disabled={fetchingLocation}>
+                <Locate className="h-4 w-4" />
+              </Button>
+              <Button onClick={() => fetchAndSortIssues()} variant="outline" size="sm">
                 <RefreshCw className="h-4 w-4" />
               </Button>
               <Button onClick={handleLogout} variant="outline" size="sm">
@@ -190,15 +239,34 @@ export default function TechnicianDashboard() {
       </header>
 
       <main className="px-4 py-5 space-y-5 max-w-2xl mx-auto">
-        {/* Attendance Card */}
+        {/* Location Status */}
+        {myLocation ? (
+          <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-3 text-sm">
+            <div className="flex items-center gap-2 text-green-700 dark:text-green-300">
+              <MapPin className="h-4 w-4" />
+              <span className="font-medium">Location active</span>
+              <span className="text-xs">• Issues sorted by nearest first</span>
+            </div>
+          </div>
+        ) : (
+          <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 text-yellow-700 dark:text-yellow-300 text-sm">
+                <Locate className="h-4 w-4" />
+                <span>Location needed to sort by nearest</span>
+              </div>
+              <Button size="sm" onClick={getCurrentLocation}>Enable</Button>
+            </div>
+          </div>
+        )}
+
+        {/* Attendance */}
         <Card className={`border-0 text-white ${isCheckedIn ? 'bg-gradient-to-r from-green-500 to-emerald-600' : 'bg-gradient-to-r from-blue-500 to-indigo-600'}`}>
           <CardContent className="pt-5 pb-5">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-sm opacity-80">Attendance Status</p>
-                <p className="text-2xl font-bold mt-0.5">
-                  {isCheckedIn ? '✓ Checked In' : 'Not Checked In'}
-                </p>
+                <p className="text-2xl font-bold mt-0.5">{isCheckedIn ? '✓ Checked In' : 'Not Checked In'}</p>
               </div>
               <Button
                 onClick={isCheckedIn ? handleCheckOut : handleCheckIn}
@@ -211,38 +279,33 @@ export default function TechnicianDashboard() {
           </CardContent>
         </Card>
 
-        {/* Stats Row */}
+        {/* Stats */}
         <div className="grid grid-cols-3 gap-3">
           <Card>
             <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-yellow-500">
-                {issues.filter(i => i.status === 'assigned').length}
-              </p>
+              <p className="text-2xl font-bold text-yellow-500">{issues.filter(i => i.status === 'assigned').length}</p>
               <p className="text-xs text-muted-foreground mt-1">Pending</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-blue-500">
-                {issues.filter(i => i.status === 'in-progress').length}
-              </p>
+              <p className="text-2xl font-bold text-blue-500">{issues.filter(i => i.status === 'in-progress').length}</p>
               <p className="text-xs text-muted-foreground mt-1">In Progress</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-4 pb-4 text-center">
-              <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">
-                {issues.length}
-              </p>
+              <p className="text-2xl font-bold text-gray-700 dark:text-gray-300">{issues.length}</p>
               <p className="text-xs text-muted-foreground mt-1">Total</p>
             </CardContent>
           </Card>
         </div>
 
-        {/* Tasks */}
+        {/* Tasks - Sorted by Nearest */}
         <div>
-          <h2 className="text-base font-semibold mb-3">
+          <h2 className="text-base font-semibold mb-3 flex items-center gap-2">
             Today's Tasks ({issues.length})
+            {myLocation && <span className="text-xs font-normal text-green-600">• Sorted by nearest first</span>}
           </h2>
 
           {issues.length === 0 ? (
@@ -250,25 +313,28 @@ export default function TechnicianDashboard() {
               <CardContent className="py-14 text-center">
                 <CheckCircle className="h-14 w-14 text-muted-foreground mx-auto mb-3" />
                 <p className="font-medium text-muted-foreground">No tasks assigned</p>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Contact admin for issue assignment
-                </p>
+                <p className="text-sm text-muted-foreground mt-1">Contact admin for assignments</p>
               </CardContent>
             </Card>
           ) : (
             <div className="space-y-4">
-              {issues.map((issue) => (
+              {issues.map((issue, idx) => (
                 <Card
                   key={issue.id}
                   className="hover:shadow-md transition-shadow cursor-pointer active:scale-[0.99]"
                   onClick={() => router.push(`/technician/issues/${issue.id}`)}
                 >
                   <CardContent className="p-4">
-                    {/* Top Row */}
-                    <div className="flex items-start justify-between mb-3">
-                      <div className="flex-1">
-                        <h3 className="font-bold text-lg">{issue.vehicle_no}</h3>
-                        <p className="text-sm text-muted-foreground">{issue.client}</p>
+                    {/* Ranking Badge */}
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="flex items-center gap-2">
+                        <div className="bg-blue-500 text-white text-xs font-bold rounded-full w-6 h-6 flex items-center justify-center">
+                          #{idx + 1}
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="font-bold text-lg">{issue.vehicle_no}</h3>
+                          <p className="text-sm text-muted-foreground">{issue.client}</p>
+                        </div>
                       </div>
                       <div className="flex gap-1.5 flex-col items-end">
                         <span className={`text-xs px-2 py-0.5 rounded-full text-white font-medium ${getStatusColor(issue.status)}`}>
@@ -279,6 +345,19 @@ export default function TechnicianDashboard() {
                         </span>
                       </div>
                     </div>
+
+                    {/* Distance Badge */}
+                    {issue.distance !== undefined && issue.distance < 9999 && (
+                      <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-md px-3 py-2 mb-3">
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-300 flex items-center gap-2">
+                          <MapPin className="h-4 w-4" />
+                          {issue.distance < 1 
+                            ? `${(issue.distance * 1000).toFixed(0)} meters away` 
+                            : `${issue.distance.toFixed(1)} km away`}
+                          <span className="text-xs opacity-75">• {idx === 0 ? 'Nearest!' : `#${idx + 1} nearest`}</span>
+                        </p>
+                      </div>
+                    )}
 
                     {/* Details */}
                     <div className="space-y-1.5 mb-4">
@@ -294,59 +373,24 @@ export default function TechnicianDashboard() {
                           {issue.poc_name} {issue.poc_number && `• ${issue.poc_number}`}
                         </p>
                       )}
-                      <p className="text-sm bg-gray-50 dark:bg-gray-800 rounded-md px-3 py-2 mt-2">
-                        {issue.issue}
-                      </p>
+                      <p className="text-sm bg-gray-50 dark:bg-gray-800 rounded-md px-3 py-2 mt-2">{issue.issue}</p>
                       {issue.availability && (
-                        <p className="text-xs text-blue-600 font-medium">
-                          Available: {issue.availability}
-                        </p>
+                        <p className="text-xs text-blue-600 font-medium">Available: {issue.availability}</p>
                       )}
                     </div>
 
-                    {/* Action Buttons */}
+                    {/* Actions */}
                     <div className="grid grid-cols-2 gap-2">
-                      <Button
-                        size="sm"
-                        onClick={(e) => handleNavigate(e, issue)}
-                        className="w-full"
-                      >
-                        <Navigation className="h-4 w-4 mr-2" />
-                        Navigate
+                      <Button size="sm" onClick={(e) => handleNavigate(e, issue)} className="w-full">
+                        <Navigation className="h-4 w-4 mr-2" />Navigate
                       </Button>
-
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={(e) => handleCamera(e, issue.id)}
-                        className="w-full"
-                      >
-                        <Camera className="h-4 w-4 mr-2" />
-                        Camera
+                      <Button size="sm" variant="outline" onClick={(e) => { e.stopPropagation(); router.push(`/technician/issues/${issue.id}`) }} className="w-full">
+                        <Camera className="h-4 w-4 mr-2" />Camera
                       </Button>
-
                       {issue.status === 'assigned' && (
-                        <Button
-                          size="sm"
-                          className="w-full col-span-2 bg-orange-500 hover:bg-orange-600"
-                          onClick={(e) => handleStartIssue(e, issue.id)}
-                        >
-                          <PlayCircle className="h-4 w-4 mr-2" />
-                          Start Work
-                        </Button>
-                      )}
-
-                      {issue.status === 'in-progress' && (
-                        <Button
-                          size="sm"
-                          className="w-full col-span-2 bg-green-600 hover:bg-green-700"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            router.push(`/technician/issues/${issue.id}`)
-                          }}
-                        >
-                          <CheckCircle className="h-4 w-4 mr-2" />
-                          Complete Issue
+                        <Button size="sm" className="w-full col-span-2 bg-orange-500 hover:bg-orange-600"
+                          onClick={(e) => handleStartIssue(e, issue.id)}>
+                          <PlayCircle className="h-4 w-4 mr-2" />Start Work
                         </Button>
                       )}
                     </div>
