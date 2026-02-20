@@ -1,31 +1,51 @@
-import type { Metadata } from "next";
-import { Inter } from "next/font/google";
-import "./globals.css";
+import type { Metadata, Viewport } from "next"
+import { Inter } from "next/font/google"
+import "./globals.css"
+import { ThemeProvider } from "@/components/theme/ThemeProvider"
 
-const inter = Inter({ subsets: ["latin"] });
+const inter = Inter({ subsets: ["latin"] })
 
 export const metadata: Metadata = {
   title: "Cautio - Field Service Management",
   description: "Issue Tracker & Field Service Management System",
-};
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "default",
+    title: "Cautio",
+  },
+  formatDetection: { telephone: false },
+}
+
+export const viewport: Viewport = {
+  themeColor: "#2563eb",
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+}
 
 export default function RootLayout({
   children,
 }: Readonly<{
-  children: React.ReactNode;
+  children: React.ReactNode
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <head>
-        {/* Leaflet CSS - Must have for maps */}
         <link
           rel="stylesheet"
           href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
           integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
           crossOrigin=""
         />
+        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
       </head>
-      <body className={inter.className}>{children}</body>
+      <body className={inter.className}>
+        <ThemeProvider>
+          {children}
+        </ThemeProvider>
+      </body>
     </html>
-  );
+  )
 }
