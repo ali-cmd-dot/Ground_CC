@@ -6,11 +6,13 @@ import { supabase } from '@/lib/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { 
+import {
   MapPin, Users, ClipboardList, LogOut,
   Plus, CheckCircle, Clock, Eye,
-  Upload, UserPlus, Search, X, RefreshCw, AlertTriangle
+  Upload, UserPlus, Search, X, RefreshCw, AlertTriangle,
+  Package, FileText, BarChart2, Bell
 } from 'lucide-react'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
 import type { Issue, Technician } from '@/lib/types'
 import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
 
@@ -23,7 +25,11 @@ export default function AdminDashboard() {
   const [searchTerm, setSearchTerm] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
   const [priorityFilter, setPriorityFilter] = useState('all')
-  const [stats, setStats] = useState({ totalIssues: 0, pendingIssues: 0, completedIssues: 0, activeTechnicians: 0 })
+  const [currentUserId, setCurrentUserId] = useState('')
+  const [stats, setStats] = useState({
+    totalIssues: 0, pendingIssues: 0, completedIssues: 0,
+    activeTechnicians: 0, lowStock: 0
+  })
 
   useEffect(() => {
     checkAuth()
@@ -53,27 +59,31 @@ export default function AdminDashboard() {
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
+    setCurrentUserId(session.user.id)
     const { data: t } = await supabase.from('technicians').select('role').eq('id', session.user.id).single()
     if (t?.role !== 'admin' && t?.role !== 'manager') router.push('/technician')
   }
 
   const fetchData = async () => {
     try {
-      const { data: issuesData } = await supabase
-        .from('issues')
-        .select(`*, technicians:assigned_to (name)`)
-        .order('created_at', { ascending: false })
-      const { data: techData } = await supabase.from('technicians').select('*')
-      if (issuesData) {
-        setIssues(issuesData)
+      const [issuesRes, techRes, inventoryRes] = await Promise.all([
+        supabase.from('issues').select('*, technicians:assigned_to (name)').order('created_at', { ascending: false }),
+        supabase.from('technicians').select('*'),
+        supabase.from('inventory_items').select('quantity, reorder_level')
+      ])
+
+      if (issuesRes.data) {
+        setIssues(issuesRes.data)
+        const lowStock = inventoryRes.data?.filter(i => i.quantity <= i.reorder_level).length || 0
         setStats({
-          totalIssues: issuesData.length,
-          pendingIssues: issuesData.filter(i => i.status === 'pending' || i.status === 'assigned').length,
-          completedIssues: issuesData.filter(i => i.status === 'completed').length,
-          activeTechnicians: techData?.length || 0
+          totalIssues: issuesRes.data.length,
+          pendingIssues: issuesRes.data.filter(i => i.status === 'pending' || i.status === 'assigned').length,
+          completedIssues: issuesRes.data.filter(i => i.status === 'completed').length,
+          activeTechnicians: techRes.data?.length || 0,
+          lowStock
         })
       }
-      if (techData) setTechnicians(techData)
+      if (techRes.data) setTechnicians(techRes.data)
     } catch (err) { console.error(err) }
     finally { setLoading(false) }
   }
@@ -89,16 +99,14 @@ export default function AdminDashboard() {
 
   const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login') }
 
-  if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
-          <p className="mt-4 text-muted-foreground">Loading...</p>
-        </div>
+  if (loading) return (
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Loading...</p>
       </div>
-    )
-  }
+    </div>
+  )
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -110,10 +118,9 @@ export default function AdminDashboard() {
               <img src="/cautio_shield.webp" alt="Cautio" className="h-8 w-8" />
               <h1 className="text-xl font-bold text-gray-900 dark:text-white">Cautio Admin</h1>
             </div>
-            <div className="flex gap-2">
-              <Button onClick={fetchData} variant="outline" size="sm">
-                <RefreshCw className="h-4 w-4" />
-              </Button>
+            <div className="flex gap-2 items-center">
+              {currentUserId && <NotificationBell userId={currentUserId} />}
+              <Button onClick={fetchData} variant="outline" size="sm"><RefreshCw className="h-4 w-4" /></Button>
               <Button onClick={handleLogout} variant="outline" size="sm">
                 <LogOut className="h-4 w-4 mr-2" />Logout
               </Button>
@@ -124,7 +131,7 @@ export default function AdminDashboard() {
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
         {/* Stats */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           <Card>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Total Issues</CardTitle>
@@ -153,61 +160,39 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent><div className="text-3xl font-bold">{stats.activeTechnicians}</div></CardContent>
           </Card>
+          <Card className={stats.lowStock > 0 ? 'border-red-300' : ''}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
+              <Package className={`h-4 w-4 ${stats.lowStock > 0 ? 'text-red-500' : 'text-muted-foreground'}`} />
+            </CardHeader>
+            <CardContent><div className={`text-3xl font-bold ${stats.lowStock > 0 ? 'text-red-600' : ''}`}>{stats.lowStock}</div></CardContent>
+          </Card>
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
-          <Card className="hover:shadow-lg transition-all cursor-pointer hover:border-blue-400 active:scale-95"
-            onClick={() => router.push('/admin/issues/create')}>
-            <CardContent className="pt-6 pb-6">
-              <div className="text-center">
-                <div className="h-12 w-12 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center mx-auto mb-3">
-                  <Plus className="h-6 w-6 text-blue-600" />
+        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
+          {[
+            { label: 'Create Issue', icon: <Plus className="h-5 w-5 text-blue-600" />, color: 'blue', path: '/admin/issues/create' },
+            { label: 'Import CSV', icon: <Upload className="h-5 w-5 text-green-600" />, color: 'green', path: '/admin/import' },
+            { label: 'Technicians', icon: <UserPlus className="h-5 w-5 text-purple-600" />, color: 'purple', path: '/admin/technicians' },
+            { label: 'Live Map', icon: <MapPin className="h-5 w-5 text-orange-600" />, color: 'orange', path: '/admin/map' },
+            { label: 'Inventory', icon: <Package className="h-5 w-5 text-teal-600" />, color: 'teal', path: '/admin/inventory' },
+            { label: 'Invoices', icon: <FileText className="h-5 w-5 text-indigo-600" />, color: 'indigo', path: '/admin/invoices' },
+            { label: 'Analytics', icon: <BarChart2 className="h-5 w-5 text-pink-600" />, color: 'pink', path: '/admin/analytics' },
+            { label: 'Attendance', icon: <Clock className="h-5 w-5 text-yellow-600" />, color: 'yellow', path: '/admin/attendance' },
+          ].map((action, i) => (
+            <Card key={i} className="hover:shadow-lg transition-all cursor-pointer active:scale-95"
+              onClick={() => router.push(action.path)}>
+              <CardContent className="pt-4 pb-4">
+                <div className="text-center">
+                  <div className={`h-10 w-10 rounded-full bg-${action.color}-100 dark:bg-${action.color}-900/30 flex items-center justify-center mx-auto mb-2`}>
+                    {action.icon}
+                  </div>
+                  <h3 className="font-semibold text-xs">{action.label}</h3>
                 </div>
-                <h3 className="font-semibold text-sm">Create Issue</h3>
-                <p className="text-xs text-muted-foreground mt-1">Add manually</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-all cursor-pointer hover:border-green-400 active:scale-95"
-            onClick={() => router.push('/admin/import')}>
-            <CardContent className="pt-6 pb-6">
-              <div className="text-center">
-                <div className="h-12 w-12 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto mb-3">
-                  <Upload className="h-6 w-6 text-green-600" />
-                </div>
-                <h3 className="font-semibold text-sm">Import CSV</h3>
-                <p className="text-xs text-muted-foreground mt-1">Bulk import</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-all cursor-pointer hover:border-purple-400 active:scale-95"
-            onClick={() => router.push('/admin/technicians')}>
-            <CardContent className="pt-6 pb-6">
-              <div className="text-center">
-                <div className="h-12 w-12 rounded-full bg-purple-100 dark:bg-purple-900/30 flex items-center justify-center mx-auto mb-3">
-                  <UserPlus className="h-6 w-6 text-purple-600" />
-                </div>
-                <h3 className="font-semibold text-sm">Technicians</h3>
-                <p className="text-xs text-muted-foreground mt-1">Manage team</p>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="hover:shadow-lg transition-all cursor-pointer hover:border-orange-400 active:scale-95"
-            onClick={() => router.push('/admin/map')}>
-            <CardContent className="pt-6 pb-6">
-              <div className="text-center">
-                <div className="h-12 w-12 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center mx-auto mb-3">
-                  <MapPin className="h-6 w-6 text-orange-600" />
-                </div>
-                <h3 className="font-semibold text-sm">Live Map</h3>
-                <p className="text-xs text-muted-foreground mt-1">Track technicians</p>
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
+          ))}
         </div>
 
         {/* Issues List */}
@@ -229,12 +214,8 @@ export default function AdminDashboard() {
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Search vehicle, client, city, POC..."
-                    value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)}
-                    className="pl-9"
-                  />
+                  <Input placeholder="Search vehicle, client, city, POC..." value={searchTerm}
+                    onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
                   {searchTerm && (
                     <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2">
                       <X className="h-4 w-4 text-muted-foreground" />
@@ -276,9 +257,7 @@ export default function AdminDashboard() {
                     {hasFilters ? 'No issues match your filters' : 'No issues found. Create or import issues.'}
                   </p>
                   {hasFilters && (
-                    <Button variant="outline" size="sm" className="mt-3" onClick={clearFilters}>
-                      Clear Filters
-                    </Button>
+                    <Button variant="outline" size="sm" className="mt-3" onClick={clearFilters}>Clear Filters</Button>
                   )}
                 </div>
               ) : (
