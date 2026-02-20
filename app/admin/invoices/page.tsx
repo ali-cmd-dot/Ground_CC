@@ -16,10 +16,6 @@ interface IssueOption {
   client: string
   city?: string
   status: string
-  issue: string
-  priority: string
-  created_at: string
-  updated_at: string
 }
 
 export default function InvoicesPage() {
