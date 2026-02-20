@@ -10,9 +10,10 @@ import {
   MapPin, Users, ClipboardList, LogOut,
   Plus, CheckCircle, Clock, Eye,
   Upload, UserPlus, Search, X, RefreshCw, AlertTriangle,
-  Package, FileText, BarChart2, Bell
+  Package, FileText, BarChart2, CalendarDays
 } from 'lucide-react'
 import { NotificationBell } from '@/components/notifications/NotificationBell'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import type { Issue, Technician } from '@/lib/types'
 import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
 
@@ -28,7 +29,7 @@ export default function AdminDashboard() {
   const [currentUserId, setCurrentUserId] = useState('')
   const [stats, setStats] = useState({
     totalIssues: 0, pendingIssues: 0, completedIssues: 0,
-    activeTechnicians: 0, lowStock: 0
+    activeTechnicians: 0, lowStockItems: 0
   })
 
   useEffect(() => {
@@ -69,7 +70,7 @@ export default function AdminDashboard() {
       const [issuesRes, techRes, inventoryRes] = await Promise.all([
         supabase.from('issues').select('*, technicians:assigned_to (name)').order('created_at', { ascending: false }),
         supabase.from('technicians').select('*'),
-        supabase.from('inventory_items').select('quantity, reorder_level')
+        supabase.from('inventory_items').select('id, quantity, reorder_level')
       ])
 
       if (issuesRes.data) {
@@ -80,7 +81,7 @@ export default function AdminDashboard() {
           pendingIssues: issuesRes.data.filter(i => i.status === 'pending' || i.status === 'assigned').length,
           completedIssues: issuesRes.data.filter(i => i.status === 'completed').length,
           activeTechnicians: techRes.data?.length || 0,
-          lowStock
+          lowStockItems: lowStock
         })
       }
       if (techRes.data) setTechnicians(techRes.data)
@@ -89,7 +90,8 @@ export default function AdminDashboard() {
   }
 
   const handleAssign = async (issueId: string, techId: string) => {
-    const { error } = await supabase.from('issues').update({ assigned_to: techId, status: 'assigned' }).eq('id', issueId)
+    const { error } = await supabase.from('issues')
+      .update({ assigned_to: techId, status: 'assigned' }).eq('id', issueId)
     if (error) alert('Error: ' + error.message)
     else fetchData()
   }
@@ -108,6 +110,28 @@ export default function AdminDashboard() {
     </div>
   )
 
+  const quickActions = [
+    { label: 'Create Issue', sub: 'Add manually', icon: Plus, color: 'blue', path: '/admin/issues/create' },
+    { label: 'Import CSV', sub: 'Bulk import', icon: Upload, color: 'green', path: '/admin/import' },
+    { label: 'Technicians', sub: 'Manage team', icon: UserPlus, color: 'purple', path: '/admin/technicians' },
+    { label: 'Live Map', sub: 'Track field team', icon: MapPin, color: 'orange', path: '/admin/map' },
+    { label: 'Inventory', sub: 'Parts & stock', icon: Package, color: 'teal', path: '/admin/inventory' },
+    { label: 'Invoices', sub: 'Billing & payments', icon: FileText, color: 'indigo', path: '/admin/invoices' },
+    { label: 'Analytics', sub: 'Reports & charts', icon: BarChart2, color: 'pink', path: '/admin/analytics' },
+    { label: 'Attendance', sub: 'Daily records', icon: CalendarDays, color: 'yellow', path: '/admin/attendance' },
+  ]
+
+  const colorMap: Record<string, string> = {
+    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600',
+    green: 'bg-green-100 dark:bg-green-900/30 text-green-600',
+    purple: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600',
+    orange: 'bg-orange-100 dark:bg-orange-900/30 text-orange-600',
+    teal: 'bg-teal-100 dark:bg-teal-900/30 text-teal-600',
+    indigo: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600',
+    pink: 'bg-pink-100 dark:bg-pink-900/30 text-pink-600',
+    yellow: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600',
+  }
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
@@ -120,6 +144,7 @@ export default function AdminDashboard() {
             </div>
             <div className="flex gap-2 items-center">
               {currentUserId && <NotificationBell userId={currentUserId} />}
+              <ThemeToggle />
               <Button onClick={fetchData} variant="outline" size="sm"><RefreshCw className="h-4 w-4" /></Button>
               <Button onClick={handleLogout} variant="outline" size="sm">
                 <LogOut className="h-4 w-4 mr-2" />Logout
@@ -160,35 +185,32 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent><div className="text-3xl font-bold">{stats.activeTechnicians}</div></CardContent>
           </Card>
-          <Card className={stats.lowStock > 0 ? 'border-red-300' : ''}>
+          <Card className={stats.lowStockItems > 0 ? 'border-red-300' : ''}>
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
-              <Package className={`h-4 w-4 ${stats.lowStock > 0 ? 'text-red-500' : 'text-muted-foreground'}`} />
+              <Package className={`h-4 w-4 ${stats.lowStockItems > 0 ? 'text-red-500' : 'text-muted-foreground'}`} />
             </CardHeader>
-            <CardContent><div className={`text-3xl font-bold ${stats.lowStock > 0 ? 'text-red-600' : ''}`}>{stats.lowStock}</div></CardContent>
+            <CardContent>
+              <div className={`text-3xl font-bold ${stats.lowStockItems > 0 ? 'text-red-600' : ''}`}>
+                {stats.lowStockItems}
+              </div>
+            </CardContent>
           </Card>
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3 mb-8">
-          {[
-            { label: 'Create Issue', icon: <Plus className="h-5 w-5 text-blue-600" />, color: 'blue', path: '/admin/issues/create' },
-            { label: 'Import CSV', icon: <Upload className="h-5 w-5 text-green-600" />, color: 'green', path: '/admin/import' },
-            { label: 'Technicians', icon: <UserPlus className="h-5 w-5 text-purple-600" />, color: 'purple', path: '/admin/technicians' },
-            { label: 'Live Map', icon: <MapPin className="h-5 w-5 text-orange-600" />, color: 'orange', path: '/admin/map' },
-            { label: 'Inventory', icon: <Package className="h-5 w-5 text-teal-600" />, color: 'teal', path: '/admin/inventory' },
-            { label: 'Invoices', icon: <FileText className="h-5 w-5 text-indigo-600" />, color: 'indigo', path: '/admin/invoices' },
-            { label: 'Analytics', icon: <BarChart2 className="h-5 w-5 text-pink-600" />, color: 'pink', path: '/admin/analytics' },
-            { label: 'Attendance', icon: <Clock className="h-5 w-5 text-yellow-600" />, color: 'yellow', path: '/admin/attendance' },
-          ].map((action, i) => (
-            <Card key={i} className="hover:shadow-lg transition-all cursor-pointer active:scale-95"
-              onClick={() => router.push(action.path)}>
-              <CardContent className="pt-4 pb-4">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+          {quickActions.map(({ label, sub, icon: Icon, color, path }) => (
+            <Card key={path}
+              className="hover:shadow-lg transition-all cursor-pointer active:scale-95"
+              onClick={() => router.push(path)}>
+              <CardContent className="pt-6 pb-6">
                 <div className="text-center">
-                  <div className={`h-10 w-10 rounded-full bg-${action.color}-100 dark:bg-${action.color}-900/30 flex items-center justify-center mx-auto mb-2`}>
-                    {action.icon}
+                  <div className={`h-12 w-12 rounded-full flex items-center justify-center mx-auto mb-3 ${colorMap[color]}`}>
+                    <Icon className="h-6 w-6" />
                   </div>
-                  <h3 className="font-semibold text-xs">{action.label}</h3>
+                  <h3 className="font-semibold text-sm">{label}</h3>
+                  <p className="text-xs text-muted-foreground mt-1">{sub}</p>
                 </div>
               </CardContent>
             </Card>
@@ -214,8 +236,8 @@ export default function AdminDashboard() {
               <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search vehicle, client, city, POC..." value={searchTerm}
-                    onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
+                  <Input placeholder="Search vehicle, client, city, POC..."
+                    value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
                   {searchTerm && (
                     <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2">
                       <X className="h-4 w-4 text-muted-foreground" />
@@ -254,7 +276,7 @@ export default function AdminDashboard() {
                 <div className="text-center py-12">
                   <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
                   <p className="text-muted-foreground font-medium">
-                    {hasFilters ? 'No issues match your filters' : 'No issues found. Create or import issues.'}
+                    {hasFilters ? 'No issues match your filters' : 'No issues yet. Create or import to get started.'}
                   </p>
                   {hasFilters && (
                     <Button variant="outline" size="sm" className="mt-3" onClick={clearFilters}>Clear Filters</Button>
@@ -262,7 +284,8 @@ export default function AdminDashboard() {
                 </div>
               ) : (
                 filteredIssues.map(issue => (
-                  <div key={issue.id} className="flex items-start justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors">
+                  <div key={issue.id}
+                    className="flex items-start justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors">
                     <div className="flex-1 cursor-pointer" onClick={() => router.push(`/admin/issues/${issue.id}`)}>
                       <div className="flex items-center gap-2 mb-2 flex-wrap">
                         <h3 className="font-semibold text-base">{issue.vehicle_no}</h3>
@@ -270,7 +293,9 @@ export default function AdminDashboard() {
                         <span className={`text-xs px-2 py-0.5 rounded-full text-white ${getPriorityColor(issue.priority)}`}>{issue.priority}</span>
                       </div>
                       <p className="text-sm font-medium">{issue.client}</p>
-                      {issue.poc_name && <p className="text-xs text-muted-foreground">POC: {issue.poc_name} {issue.poc_number && `• ${issue.poc_number}`}</p>}
+                      {issue.poc_name && (
+                        <p className="text-xs text-muted-foreground">POC: {issue.poc_name}{issue.poc_number && ` • ${issue.poc_number}`}</p>
+                      )}
                       {issue.city && (
                         <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
                           <MapPin className="h-3 w-3" />{issue.city}{issue.location && ` - ${issue.location}`}
@@ -290,8 +315,7 @@ export default function AdminDashboard() {
                         <select
                           className="h-8 px-2 border rounded-md text-xs bg-background w-full"
                           onChange={e => { if (e.target.value) handleAssign(issue.id, e.target.value) }}
-                          onClick={e => e.stopPropagation()}
-                        >
+                          onClick={e => e.stopPropagation()}>
                           <option value="">Assign to...</option>
                           {technicians.filter(t => t.role === 'technician').map(tech => (
                             <option key={tech.id} value={tech.id}>{tech.name}</option>
