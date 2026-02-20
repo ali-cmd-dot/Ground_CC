@@ -8,12 +8,24 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { ArrowLeft, Plus, FileText, Search, X, CheckCircle, Clock, IndianRupee, Download } from 'lucide-react'
-import type { Invoice, Issue } from '@/lib/types'
+import type { Invoice } from '@/lib/types'
+
+interface IssueOption {
+  id: string
+  vehicle_no: string
+  client: string
+  city?: string
+  status: string
+  issue: string
+  priority: string
+  created_at: string
+  updated_at: string
+}
 
 export default function InvoicesPage() {
   const router = useRouter()
-  const [invoices, setInvoices] = useState<(Invoice & { issues?: Issue })[]>([])
-  const [issues, setIssues] = useState<Issue[]>([])
+  const [invoices, setInvoices] = useState<(Invoice & { issues?: any })[]>([])
+  const [issues, setIssues] = useState<IssueOption[]>([])
   const [loading, setLoading] = useState(true)
   const [showForm, setShowForm] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -109,7 +121,7 @@ export default function InvoicesPage() {
   const totalRevenue = invoices.filter(i => i.payment_status === 'paid').reduce((s, i) => s + i.total_amount, 0)
   const pendingRevenue = invoices.filter(i => i.payment_status === 'pending').reduce((s, i) => s + i.total_amount, 0)
 
-  const handlePrintInvoice = (invoice: Invoice & { issues?: Issue }) => {
+  const handlePrintInvoice = (invoice: Invoice & { issues?: any }) => {
     const printContent = `
       <html><head><title>Invoice ${invoice.invoice_number}</title>
       <style>
