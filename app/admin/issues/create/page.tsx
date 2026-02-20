@@ -7,45 +7,46 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Save, MapPin } from 'lucide-react'
+import { ArrowLeft, Save, MapPin, Zap, Users } from 'lucide-react'
+import type { Technician } from '@/lib/types'
 
-interface Technician {
-  id: string
-  name: string
-  email: string
+interface TechWithDistance extends Technician {
+  distance?: number
+  lastLocation?: { lat: number; lng: number }
 }
 
 export default function CreateIssuePage() {
   const router = useRouter()
   const [loading, setLoading] = useState(false)
-  const [technicians, setTechnicians] = useState<Technician[]>([])
+  const [technicians, setTechnicians] = useState<TechWithDistance[]>([])
   const [locationLoading, setLocationLoading] = useState(false)
-  
+  const [autoAssigning, setAutoAssigning] = useState(false)
+  const [nearestTech, setNearestTech] = useState<TechWithDistance | null>(null)
+
   const [formData, setFormData] = useState({
-    vehicle_no: '',
-    client: '',
-    poc_name: '',
-    poc_number: '',
-    issue: '',
-    city: '',
-    location: '',
-    latitude: 0,
-    longitude: 0,
-    availability: '',
-    priority: 'medium',
-    assigned_to: ''
+    vehicle_no: '', client: '', poc_name: '', poc_number: '',
+    issue: '', city: '', location: '', latitude: 0, longitude: 0,
+    availability: '', priority: 'medium', assigned_to: '',
+    availability_date: ''
   })
 
   useEffect(() => {
     fetchTechnicians()
   }, [])
 
+  // Auto-find nearest when GPS coords are set
+  useEffect(() => {
+    if (formData.latitude && formData.longitude) {
+      findNearestTechnician(formData.latitude, formData.longitude)
+    }
+  }, [formData.latitude, formData.longitude])
+
   const fetchTechnicians = async () => {
     const { data } = await supabase
       .from('technicians')
-      .select('id, name, email')
+      .select('*')
       .eq('role', 'technician')
-    
+      .eq('is_active', true)
     if (data) setTechnicians(data)
   }
 
@@ -57,7 +58,6 @@ export default function CreateIssuePage() {
           ...prev,
           latitude: position.coords.latitude,
           longitude: position.coords.longitude,
-          location: `${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`
         }))
         setLocationLoading(false)
       },
@@ -68,17 +68,96 @@ export default function CreateIssuePage() {
     )
   }
 
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  }
+
+  const findNearestTechnician = async (issueLat: number, issueLng: number) => {
+    setAutoAssigning(true)
+    try {
+      // Get today's checked-in technicians with their locations
+      const today = new Date().toISOString().split('T')[0]
+      const { data: attendance } = await supabase
+        .from('attendance')
+        .select('technician_id, latitude, longitude')
+        .eq('date', today)
+        .is('check_out', null)
+
+      if (!attendance || attendance.length === 0) {
+        setNearestTech(null)
+        setAutoAssigning(false)
+        return
+      }
+
+      // Calculate distances
+      const withDistances: TechWithDistance[] = []
+      for (const att of attendance) {
+        if (!att.latitude || !att.longitude) continue
+        const tech = technicians.find(t => t.id === att.technician_id)
+        if (!tech) continue
+
+        const dist = calculateDistance(issueLat, issueLng, att.latitude, att.longitude)
+        withDistances.push({
+          ...tech,
+          distance: dist,
+          lastLocation: { lat: att.latitude, lng: att.longitude }
+        })
+      }
+
+      if (withDistances.length === 0) {
+        setNearestTech(null)
+        setAutoAssigning(false)
+        return
+      }
+
+      // Sort by distance
+      withDistances.sort((a, b) => (a.distance || 999) - (b.distance || 999))
+      setNearestTech(withDistances[0])
+    } catch (err) {
+      console.error(err)
+    } finally {
+      setAutoAssigning(false)
+    }
+  }
+
+  const handleAutoAssign = () => {
+    if (nearestTech) {
+      setFormData(prev => ({ ...prev, assigned_to: nearestTech.id }))
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setLoading(true)
-
     try {
-      const { error } = await supabase.from('issues').insert({
-        ...formData,
-        status: formData.assigned_to ? 'assigned' : 'pending'
-      })
+      const submitData: any = { ...formData }
+      if (!submitData.assigned_to) submitData.assigned_to = null
+      if (!submitData.latitude) submitData.latitude = null
+      if (!submitData.longitude) submitData.longitude = null
+      if (!submitData.availability_date) submitData.availability_date = null
+      submitData.status = submitData.assigned_to ? 'assigned' : 'pending'
 
+      const { error } = await supabase.from('issues').insert(submitData)
       if (error) throw error
+
+      // Send Telegram notification if assigned
+      if (submitData.assigned_to) {
+        const tech = technicians.find(t => t.id === submitData.assigned_to)
+        if (tech) {
+          await fetch('/api/telegram', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              message: `🔧 <b>New Issue Assigned</b>\n\n👷 Technician: <b>${tech.name}</b>\n🚗 Vehicle: <b>${formData.vehicle_no}</b>\n👤 Client: ${formData.client}\n📍 City: ${formData.city}\n⏰ ${new Date().toLocaleString('en-IN')}`
+            })
+          }).catch(() => {}) // Don't fail if Telegram fails
+        }
+      }
 
       alert('Issue created successfully!')
       router.push('/admin')
@@ -94,191 +173,166 @@ export default function CreateIssuePage() {
       <header className="bg-white dark:bg-gray-800 border-b">
         <div className="max-w-4xl mx-auto px-4 py-4">
           <Button variant="ghost" onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Back
+            <ArrowLeft className="h-4 w-4 mr-2" />Back
           </Button>
         </div>
       </header>
 
       <main className="max-w-4xl mx-auto px-4 py-8">
         <Card>
-          <CardHeader>
-            <CardTitle>Create New Issue</CardTitle>
-          </CardHeader>
+          <CardHeader><CardTitle>Create New Issue</CardTitle></CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Vehicle Details */}
+
+              {/* Vehicle */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Vehicle Details</h3>
-                
+                <h3 className="font-semibold border-b pb-2">Vehicle Details</h3>
                 <div>
-                  <Label htmlFor="vehicle_no">Vehicle Number *</Label>
-                  <Input
-                    id="vehicle_no"
-                    value={formData.vehicle_no}
-                    onChange={(e) => setFormData({...formData, vehicle_no: e.target.value})}
-                    placeholder="MH01AB1234"
-                    required
-                  />
+                  <Label>Vehicle Number *</Label>
+                  <Input value={formData.vehicle_no} onChange={e => setFormData({ ...formData, vehicle_no: e.target.value })}
+                    placeholder="MH01AB1234" required />
                 </div>
               </div>
 
-              {/* Client Details */}
+              {/* Client */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Client Details</h3>
-                
-                <div>
-                  <Label htmlFor="client">Client Name *</Label>
-                  <Input
-                    id="client"
-                    value={formData.client}
-                    onChange={(e) => setFormData({...formData, client: e.target.value})}
-                    placeholder="Baba Travels"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                <h3 className="font-semibold border-b pb-2">Client Details</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="poc_name">POC Name</Label>
-                    <Input
-                      id="poc_name"
-                      value={formData.poc_name}
-                      onChange={(e) => setFormData({...formData, poc_name: e.target.value})}
-                      placeholder="RAVI"
-                    />
+                    <Label>Client Name *</Label>
+                    <Input value={formData.client} onChange={e => setFormData({ ...formData, client: e.target.value })}
+                      placeholder="Baba Travels" required />
                   </div>
-
                   <div>
-                    <Label htmlFor="poc_number">POC Number</Label>
-                    <Input
-                      id="poc_number"
-                      value={formData.poc_number}
-                      onChange={(e) => setFormData({...formData, poc_number: e.target.value})}
-                      placeholder="9876543210"
-                    />
+                    <Label>Availability Date</Label>
+                    <Input type="date" value={formData.availability_date}
+                      onChange={e => setFormData({ ...formData, availability_date: e.target.value })} />
+                  </div>
+                  <div>
+                    <Label>POC Name</Label>
+                    <Input value={formData.poc_name} onChange={e => setFormData({ ...formData, poc_name: e.target.value })}
+                      placeholder="RAVI" />
+                  </div>
+                  <div>
+                    <Label>POC Number</Label>
+                    <Input value={formData.poc_number} onChange={e => setFormData({ ...formData, poc_number: e.target.value })}
+                      placeholder="9876543210" />
                   </div>
                 </div>
               </div>
 
-              {/* Issue Details */}
+              {/* Issue */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Issue Details</h3>
-                
+                <h3 className="font-semibold border-b pb-2">Issue Details</h3>
                 <div>
-                  <Label htmlFor="issue">Issue Description *</Label>
-                  <textarea
-                    id="issue"
-                    value={formData.issue}
-                    onChange={(e) => setFormData({...formData, issue: e.target.value})}
-                    placeholder="Device offline issue"
-                    className="w-full min-h-[100px] px-3 py-2 border rounded-md"
-                    required
-                  />
+                  <Label>Issue Description *</Label>
+                  <textarea value={formData.issue} onChange={e => setFormData({ ...formData, issue: e.target.value })}
+                    placeholder="Device offline issue" className="w-full min-h-[100px] px-3 py-2 border rounded-md bg-background" required />
                 </div>
-
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="priority">Priority *</Label>
-                    <select
-                      id="priority"
-                      value={formData.priority}
-                      onChange={(e) => setFormData({...formData, priority: e.target.value})}
-                      className="w-full h-10 px-3 border rounded-md"
-                      required
-                    >
+                    <Label>Priority *</Label>
+                    <select value={formData.priority} onChange={e => setFormData({ ...formData, priority: e.target.value })}
+                      className="w-full h-10 px-3 border rounded-md bg-background" required>
                       <option value="low">Low</option>
                       <option value="medium">Medium</option>
                       <option value="high">High</option>
                       <option value="urgent">Urgent</option>
                     </select>
                   </div>
-
                   <div>
-                    <Label htmlFor="availability">Availability</Label>
-                    <Input
-                      id="availability"
-                      value={formData.availability}
-                      onChange={(e) => setFormData({...formData, availability: e.target.value})}
-                      placeholder="9am to 7pm"
-                    />
+                    <Label>Availability Hours</Label>
+                    <Input value={formData.availability} onChange={e => setFormData({ ...formData, availability: e.target.value })}
+                      placeholder="9am to 7pm" />
                   </div>
                 </div>
               </div>
 
               {/* Location */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Location</h3>
-                
-                <div className="grid grid-cols-2 gap-4">
+                <h3 className="font-semibold border-b pb-2">Location</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
-                    <Label htmlFor="city">City</Label>
-                    <Input
-                      id="city"
-                      value={formData.city}
-                      onChange={(e) => setFormData({...formData, city: e.target.value})}
-                      placeholder="Pune"
-                    />
+                    <Label>City</Label>
+                    <Input value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })} placeholder="Pune" />
                   </div>
-
                   <div>
-                    <Label htmlFor="location">Location/Area</Label>
-                    <Input
-                      id="location"
-                      value={formData.location}
-                      onChange={(e) => setFormData({...formData, location: e.target.value})}
-                      placeholder="Sangamwadi"
-                    />
+                    <Label>Location / Area</Label>
+                    <Input value={formData.location} onChange={e => setFormData({ ...formData, location: e.target.value })} placeholder="Sangamwadi" />
                   </div>
                 </div>
-
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={getCurrentLocation}
-                  disabled={locationLoading}
-                >
-                  <MapPin className="h-4 w-4 mr-2" />
-                  {locationLoading ? 'Getting Location...' : 'Get GPS Coordinates'}
+                <Button type="button" variant="outline" onClick={getCurrentLocation} disabled={locationLoading}>
+                  <MapPin className="h-4 w-4 mr-2" />{locationLoading ? 'Getting...' : 'Get GPS Coordinates'}
                 </Button>
-
                 {formData.latitude !== 0 && (
-                  <p className="text-sm text-green-600">
-                    GPS: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
-                  </p>
+                  <p className="text-sm text-green-600 font-medium">✓ GPS: {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}</p>
                 )}
               </div>
 
               {/* Assignment */}
               <div className="space-y-4">
-                <h3 className="font-semibold">Assignment (Optional)</h3>
-                
+                <h3 className="font-semibold border-b pb-2">Assignment</h3>
+
+                {/* Auto-assign suggestion */}
+                {nearestTech && (
+                  <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Zap className="h-5 w-5 text-blue-600" />
+                        <div>
+                          <p className="font-semibold text-blue-700 dark:text-blue-300">
+                            Nearest: {nearestTech.name}
+                          </p>
+                          <p className="text-sm text-blue-600 dark:text-blue-400">
+                            {nearestTech.distance !== undefined
+                              ? nearestTech.distance < 1
+                                ? `${(nearestTech.distance * 1000).toFixed(0)}m away`
+                                : `${nearestTech.distance.toFixed(1)}km away`
+                              : 'Distance unknown'}
+                            {' • Currently checked in'}
+                          </p>
+                        </div>
+                      </div>
+                      <Button type="button" size="sm" onClick={handleAutoAssign}
+                        className="bg-blue-600 hover:bg-blue-700">
+                        Auto Assign
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {autoAssigning && (
+                  <p className="text-sm text-muted-foreground flex items-center gap-2">
+                    <span className="animate-spin">⟳</span> Finding nearest technician...
+                  </p>
+                )}
+
+                {formData.latitude !== 0 && !nearestTech && !autoAssigning && (
+                  <p className="text-sm text-yellow-600 flex items-center gap-2">
+                    <Users className="h-4 w-4" />No technicians currently checked in nearby
+                  </p>
+                )}
+
                 <div>
-                  <Label htmlFor="assigned_to">Assign to Technician</Label>
-                  <select
-                    id="assigned_to"
-                    value={formData.assigned_to}
-                    onChange={(e) => setFormData({...formData, assigned_to: e.target.value})}
-                    className="w-full h-10 px-3 border rounded-md"
-                  >
+                  <Label>Manual Assignment</Label>
+                  <select value={formData.assigned_to} onChange={e => setFormData({ ...formData, assigned_to: e.target.value })}
+                    className="w-full h-10 px-3 border rounded-md bg-background mt-1">
                     <option value="">-- Leave Unassigned --</option>
                     {technicians.map(tech => (
                       <option key={tech.id} value={tech.id}>
                         {tech.name} ({tech.email})
+                        {nearestTech?.id === tech.id ? ' ⭐ Nearest' : ''}
                       </option>
                     ))}
                   </select>
                 </div>
               </div>
 
-              <div className="flex gap-4">
+              <div className="flex gap-4 pt-4">
                 <Button type="submit" disabled={loading} className="flex-1">
-                  <Save className="h-4 w-4 mr-2" />
-                  {loading ? 'Creating...' : 'Create Issue'}
+                  <Save className="h-4 w-4 mr-2" />{loading ? 'Creating...' : 'Create Issue'}
                 </Button>
-                <Button type="button" variant="outline" onClick={() => router.back()}>
-                  Cancel
-                </Button>
+                <Button type="button" variant="outline" onClick={() => router.back()}>Cancel</Button>
               </div>
             </form>
           </CardContent>
