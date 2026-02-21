@@ -213,7 +213,9 @@ export default function TechnicianDashboard() {
         <div className="px-4 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2">
-              <img src="/cautio_shield.webp" alt="Cautio" className="h-7 w-7" />
+              <div style={{ width: '36px', height: '36px', borderRadius: '9px', background: 'radial-gradient(circle, rgba(37,99,235,0.2) 0%, rgba(10,10,20,0.8) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(37,99,235,0.2)', boxShadow: '0 0 15px rgba(37,99,235,0.15)', flexShrink: 0 }}>
+                <img src="/cautio_shield.webp" alt="Cautio" style={{ width: '24px', height: '24px', objectFit: 'contain', filter: 'drop-shadow(0 0 5px rgba(37,99,235,0.5))' }} />
+              </div>
               <div>
                 <h1 className="text-lg font-bold leading-tight">My Tasks</h1>
                 {technicianName && <p className="text-xs text-muted-foreground">{technicianName}</p>}
