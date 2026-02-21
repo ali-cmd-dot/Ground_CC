@@ -68,10 +68,10 @@ export default function CreateIssuePage() {
 
   const handleLinkExtract = () => {
     setLinkError(''); setLinkSuccess(false)
-    if (!mapsLink.trim()) { setLinkError('Link daalo pehle'); return }
+    if (!mapsLink.trim()) { setLinkError('Please enter a link first'); return }
     const coords = extractCoordsFromLink(mapsLink)
     if (!coords) {
-      setLinkError('Valid Google Maps link nahi mila. Format: maps.google.com/?q=lat,lng ya share link')
+      setLinkError('Invalid Google Maps link. Supported formats: maps.google.com/?q=lat,lng or any share link')
       return
     }
     setFormData(prev => ({ ...prev, latitude: coords.lat, longitude: coords.lng }))
@@ -119,7 +119,7 @@ export default function CreateIssuePage() {
       .not('status', 'in', '("completed","cancelled")')
     setCheckingDuplicate(false)
     if (data && data.length > 0) {
-      setDuplicateWarning(`${vehicleNo.toUpperCase()} ka issue already open hai (Status: ${data[0].status}). Naya issue tab add hoga jab ye close ho.`)
+      setDuplicateWarning(`${vehicleNo.toUpperCase()} already has an open issue (Status: ${data[0].status}). A new issue can only be added after this one is closed.`)
     } else {
       setDuplicateWarning('')
     }
@@ -147,7 +147,7 @@ export default function CreateIssuePage() {
           body: JSON.stringify({ message: `🔧 <b>Issue Assigned</b>\n\n👷 ${tech.name}\n🚗 ${formData.vehicle_no.toUpperCase()}\n👤 ${formData.client}\n📍 ${formData.city}` })
         }).catch(() => {})
       }
-      alert('Issue created!')
+      alert('Issue created successfully!')
       router.push('/admin')
     } catch (err: any) {
       alert('Error: ' + err.message)
@@ -203,7 +203,7 @@ export default function CreateIssuePage() {
                 <Label className={labelClass}>Availability Date</Label>
                 <Input type="date" value={formData.availability_date}
                   onChange={e => setFormData({ ...formData, availability_date: e.target.value })}
-                  className={inputClass + " [color-scheme:dark]"} />
+                  className={inputClass + " "} />
               </div>
               <div>
                 <Label className={labelClass}>POC Name</Label>
@@ -233,11 +233,12 @@ export default function CreateIssuePage() {
                 <div>
                   <Label className={labelClass}>Priority *</Label>
                   <select value={formData.priority} onChange={e => setFormData({ ...formData, priority: e.target.value })}
-                    className="w-full mt-1 h-10 px-3 bg-white/5 border border-white/10 rounded-lg text-white [color-scheme:dark] text-sm" required>
-                    <option value="low">🟢 Low</option>
-                    <option value="medium">🟡 Medium</option>
-                    <option value="high">🟠 High</option>
-                    <option value="urgent">🔴 Urgent</option>
+                    className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm"
+                    style={{ background: '#1a1a2e', colorScheme: 'dark' }} required>
+                    <option value="low" style={{ background: '#1a1a2e' }}>Low</option>
+                    <option value="medium" style={{ background: '#1a1a2e' }}>Medium</option>
+                    <option value="high" style={{ background: '#1a1a2e' }}>High</option>
+                    <option value="urgent" style={{ background: '#1a1a2e' }}>Urgent</option>
                   </select>
                 </div>
                 <div>
@@ -271,7 +272,7 @@ export default function CreateIssuePage() {
                 <Link className="h-4 w-4" />GPS from Google Maps Link
               </p>
               <p className="text-xs text-gray-500 mb-3">
-                Google Maps → Location → Share → Copy Link → Paste here
+                Google Maps → Open location → Share → Copy Link → Paste here
               </p>
               <div className="flex gap-2">
                 <Input value={mapsLink}
@@ -320,19 +321,20 @@ export default function CreateIssuePage() {
                 </div>
               </div>
             )}
-            {autoAssigning && <p className="text-sm text-gray-400 mb-4 flex items-center gap-2"><span className="animate-spin">⟳</span> Finding nearest...</p>}
+            {autoAssigning && <p className="text-sm text-gray-400 mb-4 flex items-center gap-2"><span className="animate-spin">⟳</span> Finding nearest technician...</p>}
             {formData.latitude !== 0 && !nearestTech && !autoAssigning && (
               <p className="text-sm text-yellow-400 mb-4 flex items-center gap-2"><Users className="h-4 w-4" />No active technicians nearby</p>
             )}
             <Label className={labelClass}>Assign to Technician</Label>
             <select value={formData.assigned_to}
               onChange={e => setFormData({ ...formData, assigned_to: e.target.value })}
-              className="w-full mt-1 h-10 px-3 bg-white/5 border border-white/10 rounded-lg text-white [color-scheme:dark] text-sm">
-              <option value="">-- Leave Unassigned --</option>
+              className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm"
+              style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
+              <option value="" style={{ background: '#1a1a2e' }}>-- Leave Unassigned --</option>
               {technicians.map(tech => (
-                <option key={tech.id} value={tech.id}>
+                <option key={tech.id} value={tech.id} style={{ background: '#1a1a2e' }}>
                   {tech.name}{(tech as any).cities ? ` — ${(tech as any).cities}` : ''}
-                  {nearestTech?.id === tech.id ? ' ⭐ Nearest' : ''}
+                  {nearestTech?.id === tech.id ? ' ★ Nearest' : ''}
                 </option>
               ))}
             </select>
