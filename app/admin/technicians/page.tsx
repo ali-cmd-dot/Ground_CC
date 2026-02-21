@@ -48,31 +48,47 @@ export default function TechniciansPage() {
   const handleCreateTechnician = async (e: React.FormEvent) => {
     e.preventDefault(); setCreating(true)
     try {
+      // Step 1: Create auth user
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: formData.email, password: formData.password,
         options: { data: { name: formData.name } }
       })
       if (authError) throw authError
-      if (!authData.user) throw new Error('User creation failed')
+      if (!authData.user) throw new Error('Failed to create user account')
 
+      // Step 2: Insert into technicians table
       const { error: dbError } = await supabase.from('technicians').insert({
-        id: authData.user.id, email: formData.email, name: formData.name,
-        phone: formData.phone, role: formData.role, cities: formData.cities || null
+        id: authData.user.id,
+        email: formData.email,
+        name: formData.name,
+        phone: formData.phone || null,
+        role: formData.role,
+        cities: formData.cities || null,
+        is_active: true
       })
-      if (dbError) throw dbError
 
-      alert('Technician created!')
+      if (dbError) {
+        // If technicians insert fails, show clear error with instructions
+        throw new Error(
+          `Auth user created but DB insert failed: ${dbError.message}. ` +
+          `Please run this SQL in Supabase: INSERT INTO technicians (id, email, name, phone, role) VALUES ('${authData.user.id}', '${formData.email}', '${formData.name}', '${formData.phone || ''}', '${formData.role}');`
+        )
+      }
+
+      alert('Technician created successfully!')
       setFormData({ email: '', password: '', name: '', phone: '', role: 'technician', cities: '' })
-      setShowForm(false); fetchTechnicians()
-    } catch (err: any) { alert('Error: ' + err.message) }
-    finally { setCreating(false) }
+      setShowForm(false)
+      fetchTechnicians()
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally { setCreating(false) }
   }
 
   const handleDelete = async (id: string, email: string) => {
     if (!confirm(`Delete technician ${email}?`)) return
     const { error } = await supabase.from('technicians').delete().eq('id', id)
     if (error) alert('Error: ' + error.message)
-    else { alert('Deleted!'); fetchTechnicians() }
+    else { alert('Deleted successfully!'); fetchTechnicians() }
   }
 
   const startEditCities = (tech: TechWithCities) => {
@@ -150,7 +166,7 @@ export default function TechniciansPage() {
                 <div>
                   <Label className="text-gray-400">Role *</Label>
                   <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}
-                    className="w-full mt-1 h-10 px-3 bg-white/5 border border-white/10 rounded-lg text-white [color-scheme:dark]">
+                    className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
                     <option value="technician">Technician</option>
                     <option value="manager">Manager</option>
                     <option value="admin">Admin</option>
