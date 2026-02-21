@@ -115,6 +115,7 @@ export default function AdminDashboard() {
     { label: 'Import CSV', sub: 'Bulk import', icon: Upload, color: 'green', path: '/admin/import' },
     { label: 'Technicians', sub: 'Manage team', icon: UserPlus, color: 'purple', path: '/admin/technicians' },
     { label: 'Live Map', sub: 'Track field team', icon: MapPin, color: 'orange', path: '/admin/map' },
+    { label: 'Issues Map', sub: 'Heatmap + distances', icon: BarChart2, color: 'red', path: '/admin/issues/map' },
     { label: 'Inventory', sub: 'Parts & stock', icon: Package, color: 'teal', path: '/admin/inventory' },
     { label: 'Invoices', sub: 'Billing & payments', icon: FileText, color: 'indigo', path: '/admin/invoices' },
     { label: 'Analytics', sub: 'Reports & charts', icon: BarChart2, color: 'pink', path: '/admin/analytics' },
@@ -122,25 +123,31 @@ export default function AdminDashboard() {
   ]
 
   const colorMap: Record<string, string> = {
-    blue: 'bg-blue-100 dark:bg-blue-900/30 text-blue-600',
-    green: 'bg-green-100 dark:bg-green-900/30 text-green-600',
-    purple: 'bg-purple-100 dark:bg-purple-900/30 text-purple-600',
-    orange: 'bg-orange-100 dark:bg-orange-900/30 text-orange-600',
-    teal: 'bg-teal-100 dark:bg-teal-900/30 text-teal-600',
-    indigo: 'bg-indigo-100 dark:bg-indigo-900/30 text-indigo-600',
-    pink: 'bg-pink-100 dark:bg-pink-900/30 text-pink-600',
-    yellow: 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-600',
+    blue: 'bg-blue-500/15 text-blue-400',
+    green: 'bg-green-500/15 text-green-400',
+    purple: 'bg-purple-500/15 text-purple-400',
+    orange: 'bg-orange-500/15 text-orange-400',
+    red: 'bg-red-500/15 text-red-400',
+    teal: 'bg-teal-500/15 text-teal-400',
+    indigo: 'bg-indigo-500/15 text-indigo-400',
+    pink: 'bg-pink-500/15 text-pink-400',
+    yellow: 'bg-yellow-500/15 text-yellow-400',
   }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <header className="bg-white dark:bg-gray-800 border-b sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+      <header className="bg-[#0a0a12] border-b border-white/8 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <img src="/cautio_shield.webp" alt="Cautio" className="h-8 w-8" />
-              <h1 className="text-xl font-bold text-gray-900 dark:text-white">Cautio Admin</h1>
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'radial-gradient(circle, rgba(37,99,235,0.2) 0%, rgba(10,10,20,0.8) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(37,99,235,0.2)', boxShadow: '0 0 20px rgba(37,99,235,0.15)' }}>
+                <img src="/cautio_shield.webp" alt="Cautio" style={{ width: '28px', height: '28px', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(37,99,235,0.5))' }} />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-white leading-tight">Cautio Admin</h1>
+                <p className="text-xs text-gray-500 leading-tight">Field Service Management</p>
+              </div>
             </div>
             <div className="flex gap-2 items-center">
               {currentUserId && <NotificationBell userId={currentUserId} />}
@@ -199,21 +206,17 @@ export default function AdminDashboard() {
         </div>
 
         {/* Quick Actions */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
           {quickActions.map(({ label, sub, icon: Icon, color, path }) => (
-            <Card key={path}
-              className="hover:shadow-lg transition-all cursor-pointer active:scale-95"
+            <div key={path}
+              className="group cursor-pointer rounded-xl border border-white/8 bg-white/3 hover:bg-white/6 hover:border-white/15 transition-all active:scale-95 p-4 text-center"
               onClick={() => router.push(path)}>
-              <CardContent className="pt-6 pb-6">
-                <div className="text-center">
-                  <div className={`h-12 w-12 rounded-full flex items-center justify-center mx-auto mb-3 ${colorMap[color]}`}>
-                    <Icon className="h-6 w-6" />
-                  </div>
-                  <h3 className="font-semibold text-sm">{label}</h3>
-                  <p className="text-xs text-muted-foreground mt-1">{sub}</p>
-                </div>
-              </CardContent>
-            </Card>
+              <div className={`h-11 w-11 rounded-xl flex items-center justify-center mx-auto mb-3 ${colorMap[color]} group-hover:scale-110 transition-transform`}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <h3 className="font-semibold text-sm text-white">{label}</h3>
+              <p className="text-xs text-gray-500 mt-0.5">{sub}</p>
+            </div>
           ))}
         </div>
 
