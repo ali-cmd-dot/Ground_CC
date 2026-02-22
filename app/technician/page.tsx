@@ -13,6 +13,7 @@ import {
 import { NotificationBell } from '@/components/notifications/NotificationBell'
 import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import type { Issue } from '@/lib/types'
+import { useLiveLocation } from '@/hooks/useLiveLocation'
 import { getStatusColor, getPriorityColor } from '@/lib/utils'
 
 interface IssueWithDistance extends Issue {
@@ -66,6 +67,13 @@ export default function TechnicianDashboard() {
       )
     }
   }
+
+  // Live location tracking — active when checked in
+  const { stopTracking } = useLiveLocation({
+    technicianId,
+    enabled: isCheckedIn && !!technicianId,
+    intervalMs: 15000,
+  })
 
   const checkAuth = async () => {
     const { data: { session } } = await supabase.auth.getSession()
@@ -155,7 +163,7 @@ export default function TechnicianDashboard() {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            message: `🏁 <b>Check Out</b>\n\n👷 ${technicianName} checked out\n⏱️ Hours: ${hours.toFixed(2)}\n⏰ ${new Date().toLocaleString('en-IN')}`
+            message: `🏁 <b>Check Out</b>\n\n👷 ${technicianName} checked out\n⏱️ Hours worked: ${hours.toFixed(2)}\n⏰ ${new Date().toLocaleString('en-IN')}`
           })
         }).catch(() => {})
       }
@@ -259,7 +267,7 @@ export default function TechnicianDashboard() {
                 <span className="font-medium">Location OFF</span>
               </div>
               <Button size="sm" onClick={getCurrentLocation} disabled={fetchingLocation}>
-                {fetchingLocation ? 'Getting...' : 'Enable'}
+                {fetchingLocation ? 'Getting location...' : 'Enable Location'}
               </Button>
             </div>
           </div>
@@ -334,7 +342,7 @@ export default function TechnicianDashboard() {
             Today's Tasks ({issues.length})
             {myLocation && issuesWithGPS > 0 && (
               <span className="text-xs font-normal text-green-600 bg-green-50 dark:bg-green-900/20 px-2 py-1 rounded-full">
-                ✓ Sorted nearest first
+                ✓ Sorted by proximity
               </span>
             )}
           </h2>
@@ -371,7 +379,7 @@ export default function TechnicianDashboard() {
                         <p className={`text-sm font-bold ${idx === 0 ? 'text-green-700' : 'text-blue-700'} flex items-center gap-2`}>
                           <Navigation className="h-4 w-4" />
                           {issue.distance < 1 ? `${(issue.distance * 1000).toFixed(0)}m away` : `${issue.distance.toFixed(2)}km away`}
-                          {idx === 0 && <span className="text-xs">• NEAREST!</span>}
+                          {idx === 0 && <span className="text-xs">• NEAREST</span>}
                         </p>
                       </div>
                     ) : (
