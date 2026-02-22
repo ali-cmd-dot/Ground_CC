@@ -3,16 +3,14 @@
 import { useEffect, useState } from 'react'
 import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
 import { GPSCamera } from '@/components/camera/GPSCamera'
-import { DigitalSignature } from '@/components/signature/DigitalSignature'
 import {
   ArrowLeft, MapPin, Phone, User, PlayCircle,
-  CheckCircle, Navigation, Camera, Clock, PenTool, Package
+  CheckCircle, Navigation, Camera, Clock, ChevronRight
 } from 'lucide-react'
 import type { Issue, IssuePhoto } from '@/lib/types'
 import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
+import { SlideToComplete } from '@/components/ui/SlideToComplete'
 
 export default function TechnicianIssueDetail() {
   const router = useRouter()
@@ -24,61 +22,22 @@ export default function TechnicianIssueDetail() {
   const [loading, setLoading] = useState(true)
   const [updating, setUpdating] = useState(false)
   const [showCamera, setShowCamera] = useState(false)
-  const [showSignature, setShowSignature] = useState(false)
-  const [hasSignature, setHasSignature] = useState(false)
-  const [partsUsed, setPartsUsed] = useState<any[]>([])
-  const [inventoryItems, setInventoryItems] = useState<any[]>([])
-  const [showPartsForm, setShowPartsForm] = useState(false)
-  const [selectedItem, setSelectedItem] = useState('')
-  const [partQty, setPartQty] = useState(1)
-  const [techId, setTechId] = useState('')
 
-  useEffect(() => {
-    fetchIssue()
-    fetchPhotos()
-    fetchSignature()
-    fetchPartsUsed()
-    getCurrentTech()
-    fetchInventory()
-  }, [issueId])
-
-  const getCurrentTech = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
-    if (session) setTechId(session.user.id)
-  }
+  useEffect(() => { fetchIssue(); fetchPhotos() }, [issueId])
 
   const fetchIssue = async () => {
     try {
       const { data, error } = await supabase.from('issues').select('*').eq('id', issueId).single()
       if (error) throw error
       setIssue(data)
-    } catch {
-      alert('Issue not found')
-      router.back()
-    } finally {
-      setLoading(false)
-    }
+    } catch { router.back() }
+    finally { setLoading(false) }
   }
 
   const fetchPhotos = async () => {
-    const { data } = await supabase.from('issue_photos').select('*').eq('issue_id', issueId).order('taken_at', { ascending: false })
+    const { data } = await supabase.from('issue_photos').select('*')
+      .eq('issue_id', issueId).order('taken_at', { ascending: false })
     if (data) setPhotos(data)
-  }
-
-  const fetchSignature = async () => {
-    const { data } = await supabase.from('digital_signatures').select('id').eq('issue_id', issueId).maybeSingle()
-    setHasSignature(!!data)
-  }
-
-  const fetchPartsUsed = async () => {
-    const { data } = await supabase.from('parts_usage')
-      .select('*, inventory_items(name, unit_price)').eq('issue_id', issueId)
-    if (data) setPartsUsed(data)
-  }
-
-  const fetchInventory = async () => {
-    const { data } = await supabase.from('inventory_items').select('id, name, quantity, unit_price').gt('quantity', 0)
-    if (data) setInventoryItems(data)
   }
 
   const updateStatus = async (newStatus: string) => {
@@ -86,234 +45,175 @@ export default function TechnicianIssueDetail() {
     try {
       const updates: any = { status: newStatus }
       if (newStatus === 'in-progress' && !issue?.started_at) updates.started_at = new Date().toISOString()
-      if (newStatus === 'completed' && !issue?.completed_at) updates.completed_at = new Date().toISOString()
+      if (newStatus === 'completed') updates.completed_at = new Date().toISOString()
       const { error } = await supabase.from('issues').update(updates).eq('id', issueId)
       if (error) throw error
       fetchIssue()
-    } catch (err: any) {
-      alert('Error: ' + err.message)
-    } finally {
-      setUpdating(false)
-    }
+    } catch (err: any) { alert('Error: ' + err.message) }
+    finally { setUpdating(false) }
   }
 
   const openNavigation = () => {
     if (issue?.latitude && issue?.longitude) {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${issue.latitude},${issue.longitude}`, '_blank')
-    } else if (issue?.city || issue?.location) {
-      const query = `${issue?.location || ''} ${issue?.city || ''}`.trim()
-      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`, '_blank')
-    } else {
-      alert('Location not available')
+      window.open(`https://www.google.com/maps/dir/?api=1&destination=${issue.latitude},${issue.longitude}&travelmode=driving`, '_blank')
+    } else if (issue?.city) {
+      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${issue.location || ''} ${issue.city}`)}`, '_blank')
     }
   }
 
-  const handleAddPart = async () => {
-    if (!selectedItem || partQty < 1) return
-    const item = inventoryItems.find(i => i.id === selectedItem)
-    if (!item) return
-    if (item.quantity < partQty) { alert('Not enough stock!'); return }
-
-    try {
-      // Record usage
-      const { error: usageError } = await supabase.from('parts_usage').insert({
-        issue_id: issueId, item_id: selectedItem,
-        technician_id: techId, quantity: partQty, unit_price: item.unit_price
-      })
-      if (usageError) throw usageError
-
-      // Reduce inventory
-      const { error: invError } = await supabase.from('inventory_items')
-        .update({ quantity: item.quantity - partQty }).eq('id', selectedItem)
-      if (invError) throw invError
-
-      alert('Part added!')
-      setSelectedItem('')
-      setPartQty(1)
-      setShowPartsForm(false)
-      fetchPartsUsed()
-      fetchInventory()
-    } catch (err: any) {
-      alert('Error: ' + err.message)
-    }
+  const PRIORITY_COLORS: Record<string, string> = {
+    urgent: '#ef4444', high: '#f97316', medium: '#eab308', low: '#22c55e'
+  }
+  const STATUS_BG: Record<string, string> = {
+    pending: 'rgba(249,115,22,0.1)', assigned: 'rgba(59,130,246,0.1)',
+    'in-progress': 'rgba(139,92,246,0.1)', completed: 'rgba(34,197,94,0.1)'
+  }
+  const STATUS_BORDER: Record<string, string> = {
+    pending: 'rgba(249,115,22,0.25)', assigned: 'rgba(59,130,246,0.25)',
+    'in-progress': 'rgba(139,92,246,0.25)', completed: 'rgba(34,197,94,0.25)'
   }
 
   if (loading) return (
-    <div className="min-h-screen flex items-center justify-center">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#06060d' }}>
+      <div style={{ width: '40px', height: '40px', border: '3px solid #2563eb', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
     </div>
   )
 
   if (!issue) return null
 
-  return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900 pb-20">
-      <header className="bg-white dark:bg-gray-800 border-b sticky top-0 z-10">
-        <div className="px-4 py-4">
-          <Button variant="ghost" onClick={() => router.back()}>
-            <ArrowLeft className="h-4 w-4 mr-2" />Back to Tasks
-          </Button>
-        </div>
-      </header>
+  const prColor = PRIORITY_COLORS[issue.priority] || '#6b7280'
 
-      <main className="px-4 py-6 space-y-6 max-w-2xl mx-auto">
-        {/* Issue Info */}
-        <Card>
-          <CardHeader>
-            <div className="flex items-start justify-between">
+  return (
+    <div style={{ minHeight: '100vh', background: '#06060d', paddingBottom: '100px', fontFamily: 'system-ui, sans-serif' }}>
+      <style>{`
+        @keyframes spin{to{transform:rotate(360deg)}}
+        .btn-nav { display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:52px;border-radius:14px;border:none;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s; }
+        .btn-nav:active { transform:scale(0.97); }
+      `}</style>
+
+      {/* Header */}
+      <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(6,6,13,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+        <button onClick={() => router.back()} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', color: '#fff', width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+          <ArrowLeft size={18} />
+        </button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <p style={{ fontSize: '18px', fontWeight: '700', color: '#fff', fontFamily: 'monospace', letterSpacing: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{issue.vehicle_no}</p>
+          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{issue.client}</p>
+        </div>
+        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+          <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px', background: `${prColor}18`, color: prColor, border: `1px solid ${prColor}30`, whiteSpace: 'nowrap' }}>
+            {issue.priority}
+          </span>
+          <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px', background: STATUS_BG[issue.status] || 'rgba(255,255,255,0.05)', color: '#fff', border: `1px solid ${STATUS_BORDER[issue.status] || 'rgba(255,255,255,0.1)'}`, whiteSpace: 'nowrap' }}>
+            {issue.status}
+          </span>
+        </div>
+      </div>
+
+      <div style={{ padding: '16px', maxWidth: '600px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+
+        {/* Issue Description */}
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '20px' }}>
+          <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>Issue</p>
+          <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.85)', lineHeight: '1.6' }}>{issue.issue}</p>
+          {issue.availability && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', color: '#60a5fa', fontSize: '13px' }}>
+              <Clock size={14} /><span>{issue.availability}</span>
+            </div>
+          )}
+          {issue.availability_date && (
+            <div style={{ marginTop: '6px', fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>
+              Date: {new Date(issue.availability_date).toLocaleDateString()}
+            </div>
+          )}
+        </div>
+
+        {/* Client & Location */}
+        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {issue.poc_name && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <User size={16} color="#60a5fa" />
+              </div>
               <div>
-                <CardTitle className="text-2xl mb-2">{issue.vehicle_no}</CardTitle>
-                <p className="text-muted-foreground">{issue.client}</p>
+                <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>{issue.poc_name}</p>
+                {issue.poc_number && <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>{issue.poc_number}</p>}
               </div>
-              <div className="flex flex-col gap-2">
-                <span className={`px-3 py-1 rounded-full text-xs font-medium text-white ${getStatusColor(issue.status)}`}>{issue.status}</span>
-                <span className={`px-3 py-1 rounded-full text-xs font-medium text-white ${getPriorityColor(issue.priority)}`}>{issue.priority}</span>
-              </div>
+              {issue.poc_number && (
+                <a href={`tel:${issue.poc_number}`} style={{ marginLeft: 'auto', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '10px', padding: '8px 14px', color: '#4ade80', fontSize: '13px', fontWeight: '600', textDecoration: 'none', whiteSpace: 'nowrap' }}>
+                  Call
+                </a>
+              )}
             </div>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {issue.city && (
-              <div className="flex items-start gap-2">
-                <MapPin className="h-5 w-5 text-muted-foreground mt-0.5" />
-                <div>
-                  <p className="font-medium">Location</p>
-                  <p className="text-sm text-muted-foreground">{issue.city}{issue.location && ` - ${issue.location}`}</p>
-                </div>
+          )}
+          {(issue.city || issue.location) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <MapPin size={16} color="#f87171" />
               </div>
-            )}
-            {issue.poc_name && (
-              <div className="flex items-start gap-2">
-                <User className="h-5 w-5 text-muted-foreground mt-0.5" />
-                <div>
-                  <p className="font-medium">Point of Contact</p>
-                  <p className="text-sm text-muted-foreground">{issue.poc_name}{issue.poc_number && ` • ${issue.poc_number}`}</p>
-                </div>
-              </div>
-            )}
-            <div>
-              <p className="font-medium mb-1">Issue Description</p>
-              <p className="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">{issue.issue}</p>
+              <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)' }}>
+                {[issue.location, issue.city].filter(Boolean).join(', ')}
+              </p>
             </div>
-            {issue.availability && (
-              <div className="flex items-start gap-2">
-                <Clock className="h-5 w-5 text-muted-foreground mt-0.5" />
-                <div><p className="font-medium">Availability</p><p className="text-sm text-muted-foreground">{issue.availability}</p></div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+          )}
+        </div>
 
         {/* Action Buttons */}
-        <Card>
-          <CardContent className="pt-6 space-y-3">
-            <Button onClick={openNavigation} className="w-full" size="lg">
-              <Navigation className="h-5 w-5 mr-2" />Navigate to Location
-            </Button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+          <button className="btn-nav" onClick={openNavigation}
+            style={{ background: '#2563eb', color: '#fff' }}>
+            <Navigation size={18} />Navigate
+          </button>
+          <button className="btn-nav" onClick={() => setShowCamera(!showCamera)}
+            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}>
+            <Camera size={18} />{showCamera ? 'Hide Camera' : 'Add Photo'}
+          </button>
+        </div>
 
-            {issue.status === 'assigned' && (
-              <Button onClick={() => updateStatus('in-progress')} disabled={updating} className="w-full" size="lg">
-                <PlayCircle className="h-5 w-5 mr-2" />Start Work
-              </Button>
-            )}
-
-            {issue.status === 'in-progress' && (
-              <Button onClick={() => updateStatus('completed')} disabled={updating}
-                className="w-full bg-green-600 hover:bg-green-700" size="lg">
-                <CheckCircle className="h-5 w-5 mr-2" />Mark as Completed
-              </Button>
-            )}
-
-            <div className="grid grid-cols-2 gap-3">
-              <Button onClick={() => setShowCamera(!showCamera)} variant="outline" size="lg">
-                <Camera className="h-5 w-5 mr-2" />{showCamera ? 'Hide' : 'Camera'}
-              </Button>
-              <Button onClick={() => setShowSignature(!showSignature)} variant="outline" size="lg"
-                className={hasSignature ? 'border-green-500 text-green-600' : ''}>
-                <PenTool className="h-5 w-5 mr-2" />{hasSignature ? '✓ Signed' : 'Signature'}
-              </Button>
-            </div>
-
-            <Button onClick={() => setShowPartsForm(!showPartsForm)} variant="outline" className="w-full" size="lg">
-              <Package className="h-5 w-5 mr-2" />Add Parts Used
-            </Button>
-
-            {issue.poc_number && (
-              <Button variant="outline" className="w-full" size="lg" asChild>
-                <a href={`tel:${issue.poc_number}`}>
-                  <Phone className="h-5 w-5 mr-2" />Call Client
-                </a>
-              </Button>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Add Parts Form */}
-        {showPartsForm && (
-          <Card>
-            <CardHeader><CardTitle className="flex items-center gap-2"><Package className="h-5 w-5" />Add Parts Used</CardTitle></CardHeader>
-            <CardContent className="space-y-3">
-              <select value={selectedItem} onChange={e => setSelectedItem(e.target.value)}
-                className="w-full h-10 px-3 border rounded-md bg-background">
-                <option value="">-- Select Part --</option>
-                {inventoryItems.map(item => (
-                  <option key={item.id} value={item.id}>{item.name} (Stock: {item.quantity}) - ₹{item.unit_price}</option>
-                ))}
-              </select>
-              <div className="flex gap-3">
-                <input type="number" min="1" value={partQty} onChange={e => setPartQty(parseInt(e.target.value) || 1)}
-                  className="w-24 h-10 px-3 border rounded-md bg-background" />
-                <Button onClick={handleAddPart} className="flex-1" disabled={!selectedItem}>Add Part</Button>
-                <Button variant="outline" onClick={() => setShowPartsForm(false)}>Cancel</Button>
-              </div>
-
-              {/* Parts Used List */}
-              {partsUsed.length > 0 && (
-                <div className="border-t pt-3 space-y-2">
-                  <p className="text-sm font-medium">Parts used so far:</p>
-                  {partsUsed.map(p => (
-                    <div key={p.id} className="flex justify-between text-sm">
-                      <span>{(p as any).inventory_items?.name} × {p.quantity}</span>
-                      <span>₹{(p.quantity * ((p as any).inventory_items?.unit_price || 0)).toLocaleString('en-IN')}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+        {/* Start Work */}
+        {issue.status === 'assigned' && (
+          <button className="btn-nav" onClick={() => updateStatus('in-progress')} disabled={updating}
+            style={{ background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c', width: '100%' }}>
+            <PlayCircle size={18} />Start Work
+          </button>
         )}
 
-        {/* GPS Camera */}
+        {/* Slide to Complete */}
+        {issue.status === 'in-progress' && (
+          <SlideToComplete
+            onComplete={() => updateStatus('completed')}
+            disabled={updating}
+            label="Slide to Complete"
+          />
+        )}
+
+        {/* Camera */}
         {showCamera && (
-          <GPSCamera issueId={issueId} onPhotoUploaded={() => { fetchPhotos(); setShowCamera(false) }} />
+          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '16px' }}>
+            <GPSCamera issueId={issueId} onPhotoUploaded={() => { fetchPhotos(); setShowCamera(false) }} />
+          </div>
         )}
 
-        {/* Digital Signature */}
-        {showSignature && !hasSignature && (
-          <DigitalSignature issueId={issueId} onSigned={() => { setHasSignature(true); setShowSignature(false) }} />
-        )}
-
-        {/* Photos Gallery */}
-        <Card>
-          <CardHeader><CardTitle>Photos ({photos.length})</CardTitle></CardHeader>
-          <CardContent>
-            {photos.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8 text-sm">No photos yet. Use camera to document work.</p>
-            ) : (
-              <div className="grid grid-cols-2 gap-4">
-                {photos.map(photo => (
-                  <div key={photo.id} className="relative aspect-square rounded-lg overflow-hidden border">
-                    <img src={photo.photo_url} alt="Issue photo" className="w-full h-full object-cover" />
-                    <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-2">
-                      <p className="font-medium capitalize">{photo.photo_type}</p>
-                      <p className="opacity-80">{new Date(photo.taken_at).toLocaleString()}</p>
-                    </div>
+        {/* Photos */}
+        {photos.length > 0 && (
+          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '16px' }}>
+            <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontWeight: '600', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+              Photos ({photos.length})
+            </p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+              {photos.map(photo => (
+                <div key={photo.id} style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', aspectRatio: '1' }}>
+                  <img src={photo.photo_url} alt="Issue" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.8)', textTransform: 'capitalize' }}>
+                    {photo.photo_type}
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </main>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   )
 }
