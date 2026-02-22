@@ -1,219 +1,183 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { GPSCamera } from '@/components/camera/GPSCamera'
-import {
-  ArrowLeft, MapPin, Phone, User, PlayCircle,
-  CheckCircle, Navigation, Camera, Clock, ChevronRight
-} from 'lucide-react'
-import type { Issue, IssuePhoto } from '@/lib/types'
-import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
-import { SlideToComplete } from '@/components/ui/SlideToComplete'
+import { AppShell } from '@/components/layout/AppShell'
+import { Save, MapPin } from 'lucide-react'
 
-export default function TechnicianIssueDetail() {
+const S = `
+@keyframes fu{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+*,*::before,*::after{box-sizing:border-box}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px}
+input,select,textarea{font-family:'Outfit',system-ui,sans-serif;color:#fff;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);border-radius:9px;font-size:13px;outline:none;width:100%;padding:10px 12px}
+input,select{height:38px;padding:0 12px}
+input::placeholder,textarea::placeholder{color:rgba(255,255,255,.2)}
+input:focus,select:focus,textarea:focus{border-color:rgba(34,211,238,.3);background:rgba(34,211,238,.04)}
+label{font-size:10px;font-weight:600;color:rgba(255,255,255,.3);text-transform:uppercase;letter-spacing:1.2px;display:block;margin-bottom:5px}
+.fgroup{display:flex;flex-direction:column;gap:5px}
+.btn{height:38px;border-radius:9px;border:none;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Outfit',system-ui,sans-serif;transition:all .15s;padding:0 16px}
+.btn:active{transform:scale(.97)}
+.sec{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:20px;margin-bottom:14px}
+.sec-title{font-family:'Syne',sans-serif;font-size:13px;font-weight:800;color:rgba(255,255,255,.55);text-transform:uppercase;letter-spacing:.5px;margin-bottom:14px}
+`
+
+export default function CreateIssuePage() {
   const router = useRouter()
-  const params = useParams()
-  const issueId = params.id as string
+  const [loading,    setLoading]    = useState(false)
+  const [techs,      setTechs]      = useState<{id:string;name:string;email:string}[]>([])
+  const [gettingLoc, setGettingLoc] = useState(false)
+  const [userName,   setUserName]   = useState('')
+  const [form, setForm] = useState({
+    vehicle_no:'', client:'', poc_name:'', poc_number:'',
+    issue:'', city:'', location:'', latitude:0, longitude:0,
+    availability:'', priority:'medium', assigned_to:'',
+  })
 
-  const [issue, setIssue] = useState<Issue | null>(null)
-  const [photos, setPhotos] = useState<IssuePhoto[]>([])
-  const [loading, setLoading] = useState(true)
-  const [updating, setUpdating] = useState(false)
-  const [showCamera, setShowCamera] = useState(false)
+  useEffect(() => { init() }, [])
 
-  useEffect(() => { fetchIssue(); fetchPhotos() }, [issueId])
+  const init = async () => {
+    const { data:{ session } } = await supabase.auth.getSession()
+    if (!session) { router.push('/login'); return }
+    const { data:t } = await supabase.from('technicians').select('*').eq('id',session.user.id).single()
+    if (t) setUserName(t.name)
+    const { data:td } = await supabase.from('technicians').select('id,name,email').eq('role','technician')
+    if (td) setTechs(td)
+  }
 
-  const fetchIssue = async () => {
+  const getLocation = () => {
+    setGettingLoc(true)
+    navigator.geolocation.getCurrentPosition(
+      p => { setForm(prev => ({ ...prev, latitude:p.coords.latitude, longitude:p.coords.longitude, location:`${p.coords.latitude.toFixed(6)}, ${p.coords.longitude.toFixed(6)}` })); setGettingLoc(false) },
+      err => { alert('Location error: '+err.message); setGettingLoc(false) }
+    )
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault(); setLoading(true)
     try {
-      const { data, error } = await supabase.from('issues').select('*').eq('id', issueId).single()
+      const { error } = await supabase.from('issues').insert({ ...form, status:form.assigned_to?'assigned':'pending' })
       if (error) throw error
-      setIssue(data)
-    } catch { router.back() }
+      router.push('/admin')
+    } catch(err:any) { alert('Error: '+err.message) }
     finally { setLoading(false) }
   }
 
-  const fetchPhotos = async () => {
-    const { data } = await supabase.from('issue_photos').select('*')
-      .eq('issue_id', issueId).order('taken_at', { ascending: false })
-    if (data) setPhotos(data)
-  }
+  const f = (id: string, val: string) => setForm(prev => ({ ...prev, [id]:val }))
 
-  const updateStatus = async (newStatus: string) => {
-    setUpdating(true)
-    try {
-      const updates: any = { status: newStatus }
-      if (newStatus === 'in-progress' && !issue?.started_at) updates.started_at = new Date().toISOString()
-      if (newStatus === 'completed') updates.completed_at = new Date().toISOString()
-      const { error } = await supabase.from('issues').update(updates).eq('id', issueId)
-      if (error) throw error
-      fetchIssue()
-    } catch (err: any) { alert('Error: ' + err.message) }
-    finally { setUpdating(false) }
-  }
-
-  const openNavigation = () => {
-    if (issue?.latitude && issue?.longitude) {
-      window.open(`https://www.google.com/maps/dir/?api=1&destination=${issue.latitude},${issue.longitude}&travelmode=driving`, '_blank')
-    } else if (issue?.city) {
-      window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${issue.location || ''} ${issue.city}`)}`, '_blank')
-    }
-  }
-
-  const PRIORITY_COLORS: Record<string, string> = {
-    urgent: '#ef4444', high: '#f97316', medium: '#eab308', low: '#22c55e'
-  }
-  const STATUS_BG: Record<string, string> = {
-    pending: 'rgba(249,115,22,0.1)', assigned: 'rgba(59,130,246,0.1)',
-    'in-progress': 'rgba(139,92,246,0.1)', completed: 'rgba(34,197,94,0.1)'
-  }
-  const STATUS_BORDER: Record<string, string> = {
-    pending: 'rgba(249,115,22,0.25)', assigned: 'rgba(59,130,246,0.25)',
-    'in-progress': 'rgba(139,92,246,0.25)', completed: 'rgba(34,197,94,0.25)'
-  }
-
-  if (loading) return (
-    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#06060d' }}>
-      <div style={{ width: '40px', height: '40px', border: '3px solid #2563eb', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  )
-
-  if (!issue) return null
-
-  const prColor = PRIORITY_COLORS[issue.priority] || '#6b7280'
+  const logout = async () => { await supabase.auth.signOut(); router.push('/login') }
 
   return (
-    <div style={{ minHeight: '100vh', background: '#06060d', paddingBottom: '100px', fontFamily: 'system-ui, sans-serif' }}>
-      <style>{`
-        @keyframes spin{to{transform:rotate(360deg)}}
-        .btn-nav { display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:52px;border-radius:14px;border:none;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s; }
-        .btn-nav:active { transform:scale(0.97); }
-      `}</style>
+    <AppShell role="admin" userName={userName} onLogout={logout}>
+      <style>{S}</style>
+      <div style={{ flex:1, overflowY:'auto', padding:'28px', minWidth:0, maxWidth:'720px' }}>
 
-      {/* Header */}
-      <div style={{ position: 'sticky', top: 0, zIndex: 10, background: 'rgba(6,6,13,0.95)', backdropFilter: 'blur(12px)', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: '12px' }}>
-        <button onClick={() => router.back()} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '10px', color: '#fff', width: '38px', height: '38px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-          <ArrowLeft size={18} />
-        </button>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <p style={{ fontSize: '18px', fontWeight: '700', color: '#fff', fontFamily: 'monospace', letterSpacing: '1px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{issue.vehicle_no}</p>
-          <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{issue.client}</p>
-        </div>
-        <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-          <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px', background: `${prColor}18`, color: prColor, border: `1px solid ${prColor}30`, whiteSpace: 'nowrap' }}>
-            {issue.priority}
-          </span>
-          <span style={{ fontSize: '11px', fontWeight: '600', padding: '4px 10px', borderRadius: '20px', background: STATUS_BG[issue.status] || 'rgba(255,255,255,0.05)', color: '#fff', border: `1px solid ${STATUS_BORDER[issue.status] || 'rgba(255,255,255,0.1)'}`, whiteSpace: 'nowrap' }}>
-            {issue.status}
-          </span>
-        </div>
-      </div>
-
-      <div style={{ padding: '16px', maxWidth: '600px', margin: '0 auto', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-
-        {/* Issue Description */}
-        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '20px' }}>
-          <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.35)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.8px', marginBottom: '10px' }}>Issue</p>
-          <p style={{ fontSize: '15px', color: 'rgba(255,255,255,0.85)', lineHeight: '1.6' }}>{issue.issue}</p>
-          {issue.availability && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '12px', color: '#60a5fa', fontSize: '13px' }}>
-              <Clock size={14} /><span>{issue.availability}</span>
-            </div>
-          )}
-          {issue.availability_date && (
-            <div style={{ marginTop: '6px', fontSize: '12px', color: 'rgba(255,255,255,0.3)' }}>
-              Date: {new Date(issue.availability_date).toLocaleDateString()}
-            </div>
-          )}
+        <div style={{ marginBottom:'24px', animation:'fu .4s ease' }}>
+          <p style={{ fontSize:'11px', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'2px', marginBottom:'5px' }}>New</p>
+          <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:'24px', fontWeight:'800', color:'#fff', lineHeight:1 }}>Create Issue</h1>
         </div>
 
-        {/* Client & Location */}
-        <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {issue.poc_name && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <User size={16} color="#60a5fa" />
-              </div>
-              <div>
-                <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.85)', fontWeight: '600' }}>{issue.poc_name}</p>
-                {issue.poc_number && <p style={{ fontSize: '12px', color: 'rgba(255,255,255,0.35)', marginTop: '2px' }}>{issue.poc_number}</p>}
-              </div>
-              {issue.poc_number && (
-                <a href={`tel:${issue.poc_number}`} style={{ marginLeft: 'auto', background: 'rgba(34,197,94,0.1)', border: '1px solid rgba(34,197,94,0.2)', borderRadius: '10px', padding: '8px 14px', color: '#4ade80', fontSize: '13px', fontWeight: '600', textDecoration: 'none', whiteSpace: 'nowrap' }}>
-                  Call
-                </a>
-              )}
+        <form onSubmit={handleSubmit} style={{ animation:'fu .4s ease .05s both' }}>
+          {/* Vehicle */}
+          <div className="sec">
+            <p className="sec-title">Vehicle</p>
+            <div className="fgroup">
+              <label htmlFor="vehicle_no">Vehicle Number *</label>
+              <input id="vehicle_no" value={form.vehicle_no} onChange={e => f('vehicle_no',e.target.value)} placeholder="MH01AB1234" required />
             </div>
-          )}
-          {(issue.city || issue.location) && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ width: '36px', height: '36px', borderRadius: '10px', background: 'rgba(239,68,68,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                <MapPin size={16} color="#f87171" />
+          </div>
+
+          {/* Client */}
+          <div className="sec">
+            <p className="sec-title">Client</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr', gap:'12px' }}>
+              <div className="fgroup" style={{ gridColumn:'1/-1' }}>
+                <label htmlFor="client">Client Name *</label>
+                <input id="client" value={form.client} onChange={e => f('client',e.target.value)} placeholder="Company name" required />
               </div>
-              <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.7)' }}>
-                {[issue.location, issue.city].filter(Boolean).join(', ')}
+              <div className="fgroup">
+                <label htmlFor="poc_name">POC Name</label>
+                <input id="poc_name" value={form.poc_name} onChange={e => f('poc_name',e.target.value)} placeholder="John" />
+              </div>
+              <div className="fgroup" style={{ gridColumn:'span 2' }}>
+                <label htmlFor="poc_number">POC Number</label>
+                <input id="poc_number" value={form.poc_number} onChange={e => f('poc_number',e.target.value)} placeholder="9876543210" />
+              </div>
+            </div>
+          </div>
+
+          {/* Issue */}
+          <div className="sec">
+            <p className="sec-title">Issue Details</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px' }}>
+              <div className="fgroup" style={{ gridColumn:'1/-1' }}>
+                <label htmlFor="issue">Description *</label>
+                <textarea id="issue" value={form.issue} onChange={e => f('issue',e.target.value)} placeholder="Describe the issue…" style={{ minHeight:'80px', resize:'vertical' }} required />
+              </div>
+              <div className="fgroup">
+                <label htmlFor="priority">Priority *</label>
+                <select id="priority" value={form.priority} onChange={e => f('priority',e.target.value)}>
+                  {['low','medium','high','urgent'].map(o => <option key={o} value={o} style={{ background:'#0b0b17' }}>{o.charAt(0).toUpperCase()+o.slice(1)}</option>)}
+                </select>
+              </div>
+              <div className="fgroup">
+                <label htmlFor="availability">Availability</label>
+                <input id="availability" value={form.availability} onChange={e => f('availability',e.target.value)} placeholder="9am–7pm" />
+              </div>
+            </div>
+          </div>
+
+          {/* Location */}
+          <div className="sec">
+            <p className="sec-title">Location</p>
+            <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'12px', marginBottom:'12px' }}>
+              <div className="fgroup">
+                <label htmlFor="city">City</label>
+                <input id="city" value={form.city} onChange={e => f('city',e.target.value)} placeholder="Mumbai" />
+              </div>
+              <div className="fgroup">
+                <label htmlFor="location">Area</label>
+                <input id="location" value={form.location} onChange={e => f('location',e.target.value)} placeholder="Bandra West" />
+              </div>
+            </div>
+            <button type="button" onClick={getLocation} disabled={gettingLoc} className="btn"
+              style={{ background:'rgba(34,211,238,.08)', border:'1px solid rgba(34,211,238,.18)', color:'#22d3ee' }}>
+              <MapPin size={13} style={{ animation:gettingLoc?'spin 1s linear infinite':'none' }} />
+              {gettingLoc ? 'Getting GPS…' : 'Capture GPS Coordinates'}
+            </button>
+            {form.latitude !== 0 && (
+              <p style={{ fontSize:'11px', color:'#4ade80', marginTop:'8px', fontFamily:'monospace' }}>
+                ✓ {form.latitude.toFixed(6)}, {form.longitude.toFixed(6)}
               </p>
-            </div>
-          )}
-        </div>
-
-        {/* Action Buttons */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-          <button className="btn-nav" onClick={openNavigation}
-            style={{ background: '#2563eb', color: '#fff' }}>
-            <Navigation size={18} />Navigate
-          </button>
-          <button className="btn-nav" onClick={() => setShowCamera(!showCamera)}
-            style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: '#fff' }}>
-            <Camera size={18} />{showCamera ? 'Hide Camera' : 'Add Photo'}
-          </button>
-        </div>
-
-        {/* Start Work */}
-        {issue.status === 'assigned' && (
-          <button className="btn-nav" onClick={() => updateStatus('in-progress')} disabled={updating}
-            style={{ background: 'rgba(249,115,22,0.15)', border: '1px solid rgba(249,115,22,0.3)', color: '#fb923c', width: '100%' }}>
-            <PlayCircle size={18} />Start Work
-          </button>
-        )}
-
-        {/* Slide to Complete */}
-        {issue.status === 'in-progress' && (
-          <SlideToComplete
-            onComplete={() => updateStatus('completed')}
-            disabled={updating}
-            label="Slide to Complete"
-          />
-        )}
-
-        {/* Camera */}
-        {showCamera && (
-          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '16px' }}>
-            <GPSCamera issueId={issueId} onPhotoUploaded={() => { fetchPhotos(); setShowCamera(false) }} />
+            )}
           </div>
-        )}
 
-        {/* Photos */}
-        {photos.length > 0 && (
-          <div style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)', borderRadius: '16px', padding: '16px' }}>
-            <p style={{ fontSize: '13px', color: 'rgba(255,255,255,0.4)', fontWeight: '600', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-              Photos ({photos.length})
-            </p>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-              {photos.map(photo => (
-                <div key={photo.id} style={{ position: 'relative', borderRadius: '12px', overflow: 'hidden', aspectRatio: '1' }}>
-                  <img src={photo.photo_url} alt="Issue" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                  <div style={{ position: 'absolute', bottom: 0, left: 0, right: 0, background: 'linear-gradient(transparent, rgba(0,0,0,0.7))', padding: '8px', fontSize: '11px', color: 'rgba(255,255,255,0.8)', textTransform: 'capitalize' }}>
-                    {photo.photo_type}
-                  </div>
-                </div>
-              ))}
+          {/* Assignment */}
+          <div className="sec">
+            <p className="sec-title">Assignment</p>
+            <div className="fgroup">
+              <label htmlFor="assigned_to">Assign to Technician</label>
+              <select id="assigned_to" value={form.assigned_to} onChange={e => f('assigned_to',e.target.value)}>
+                <option value="" style={{ background:'#0b0b17' }}>— Leave Unassigned —</option>
+                {techs.map(t => <option key={t.id} value={t.id} style={{ background:'#0b0b17' }}>{t.name} ({t.email})</option>)}
+              </select>
             </div>
           </div>
-        )}
+
+          {/* Submit */}
+          <div style={{ display:'flex', gap:'8px' }}>
+            <button type="submit" disabled={loading} className="btn"
+              style={{ flex:1, background:'linear-gradient(135deg,#0ea5e9,#6366f1)', border:'none', color:'#fff', boxShadow:'0 4px 18px rgba(34,211,238,.2)' }}>
+              <Save size={14} />{loading ? 'Creating…' : 'Create Issue'}
+            </button>
+            <button type="button" onClick={() => router.back()} className="btn"
+              style={{ background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', color:'rgba(255,255,255,.4)' }}>
+              Cancel
+            </button>
+          </div>
+        </form>
       </div>
-    </div>
+    </AppShell>
   )
 }
