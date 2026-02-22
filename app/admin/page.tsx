@@ -146,7 +146,7 @@ export default function AdminDashboard() {
               </div>
               <div>
                 <h1 className="text-lg font-bold text-white leading-tight">Cautio Admin</h1>
-                <p className="text-xs text-gray-500 leading-tight">Field Service Management</p>
+                
               </div>
             </div>
             <div className="flex gap-2 items-center">
@@ -248,7 +248,7 @@ export default function AdminDashboard() {
                   )}
                 </div>
                 <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
-                  className="h-10 px-3 border rounded-md text-sm bg-background">
+                  className="h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
                   <option value="all">All Status</option>
                   <option value="pending">Pending</option>
                   <option value="assigned">Assigned</option>
@@ -257,7 +257,7 @@ export default function AdminDashboard() {
                   <option value="cancelled">Cancelled</option>
                 </select>
                 <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)}
-                  className="h-10 px-3 border rounded-md text-sm bg-background">
+                  className="h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
                   <option value="all">All Priority</option>
                   <option value="low">Low</option>
                   <option value="medium">Medium</option>
