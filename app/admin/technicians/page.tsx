@@ -1,271 +1,233 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
-import { ArrowLeft, Plus, Mail, Phone, Shield, Trash2, MapPin, Edit2, Check, X } from 'lucide-react'
-import type { Technician } from '@/lib/types'
+import { AppShell } from '@/components/layout/AppShell'
+import { ArrowLeft, MapPin, Phone, PlayCircle, CheckCircle, XCircle, Camera, Trash2, Edit } from 'lucide-react'
+import type { Issue, IssuePhoto } from '@/lib/types'
+import { formatDateTime } from '@/lib/utils'
 
-interface TechWithCities extends Technician {
-  cities?: string
+const PC: Record<string,{c:string;bg:string}> = {
+  urgent:{c:'#f87171',bg:'rgba(248,113,113,.12)'}, high:{c:'#fb923c',bg:'rgba(251,146,60,.12)'},
+  medium:{c:'#fbbf24',bg:'rgba(251,191,36,.12)' }, low: {c:'#4ade80',bg:'rgba(74,222,128,.12)'},
+}
+const SC: Record<string,{c:string;bg:string}> = {
+  pending:{c:'#fb923c',bg:'rgba(251,146,60,.12)'}, assigned:{c:'#22d3ee',bg:'rgba(34,211,238,.1)'},
+  'in-progress':{c:'#a78bfa',bg:'rgba(167,139,250,.12)'}, completed:{c:'#4ade80',bg:'rgba(74,222,128,.12)'},
+  cancelled:{c:'#6b7280',bg:'rgba(107,114,128,.1)'},
 }
 
-export default function TechniciansPage() {
-  const router = useRouter()
-  const [technicians, setTechnicians] = useState<TechWithCities[]>([])
-  const [loading, setLoading] = useState(true)
-  const [showForm, setShowForm] = useState(false)
-  const [creating, setCreating] = useState(false)
-  const [editingCities, setEditingCities] = useState<Record<string, string>>({})
-  const [savingCities, setSavingCities] = useState<string | null>(null)
+const S = `
+@keyframes fu{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+*,*::before,*::after{box-sizing:border-box}
+::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px}
+.act{height:36px;border-radius:9px;border:none;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Outfit',system-ui,sans-serif;transition:all .15s;padding:0 14px}
+.act:active{transform:scale(.97)}
+.ibox{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.055);border-radius:10px;padding:12px}
+.sec{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);border-radius:16px;padding:18px}
+`
 
-  const [formData, setFormData] = useState({
-    email: '', password: '', name: '', phone: '', role: 'technician', cities: ''
-  })
+export default function AdminIssueDetail() {
+  const router  = useRouter()
+  const params  = useParams()
+  const issueId = params.id as string
+  const [issue,    setIssue]    = useState<Issue|null>(null)
+  const [photos,   setPhotos]   = useState<IssuePhoto[]>([])
+  const [tech,     setTech]     = useState<any>(null)
+  const [loading,  setLoading]  = useState(true)
+  const [updating, setUpdating] = useState(false)
+  const [userName, setUserName] = useState('')
+  const [userId,   setUserId]   = useState('')
 
-  useEffect(() => {
-    checkAuth(); fetchTechnicians()
-  }, [])
+  useEffect(() => { init() }, [issueId])
 
-  const checkAuth = async () => {
-    const { data: { session } } = await supabase.auth.getSession()
+  const init = async () => {
+    const { data:{ session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
-    const { data: tech } = await supabase.from('technicians').select('role').eq('id', session.user.id).single()
-    if (tech?.role !== 'admin' && tech?.role !== 'manager') router.push('/technician')
+    setUserId(session.user.id)
+    const { data:t } = await supabase.from('technicians').select('*').eq('id',session.user.id).single()
+    if (t) setUserName(t.name)
+    const { data, error } = await supabase.from('issues').select('*, technicians:assigned_to(id,name,email,phone)').eq('id',issueId).single()
+    if (error) { router.back(); return }
+    setIssue(data); if (data.assigned_to) setTech((data as any).technicians); setLoading(false)
+    const { data:ph } = await supabase.from('issue_photos').select('*').eq('issue_id',issueId).order('taken_at',{ascending:false})
+    if (ph) setPhotos(ph)
   }
 
-  const fetchTechnicians = async () => {
-    try {
-      const { data } = await supabase.from('technicians').select('*').order('created_at', { ascending: false })
-      if (data) setTechnicians(data)
-    } finally { setLoading(false) }
+  const updateStatus = async (st:string) => {
+    setUpdating(true)
+    const u:any={ status:st }
+    if (st==='in-progress'&&!issue?.started_at)  u.started_at  = new Date().toISOString()
+    if (st==='completed'  &&!issue?.completed_at) u.completed_at= new Date().toISOString()
+    await supabase.from('issues').update(u).eq('id',issueId)
+    const { data } = await supabase.from('issues').select('*, technicians:assigned_to(id,name,email,phone)').eq('id',issueId).single()
+    if (data) { setIssue(data); if(data.assigned_to) setTech((data as any).technicians) }
+    setUpdating(false)
   }
 
-  const handleCreateTechnician = async (e: React.FormEvent) => {
-    e.preventDefault(); setCreating(true)
-    try {
-      // Step 1: Create auth user
-      const { data: authData, error: authError } = await supabase.auth.signUp({
-        email: formData.email, password: formData.password,
-        options: { data: { name: formData.name } }
-      })
-      if (authError) throw authError
-      if (!authData.user) throw new Error('Failed to create user account')
-
-      // Step 2: Insert into technicians table
-      const { error: dbError } = await supabase.from('technicians').insert({
-        id: authData.user.id,
-        email: formData.email,
-        name: formData.name,
-        phone: formData.phone || null,
-        role: formData.role,
-        cities: formData.cities || null,
-        is_active: true
-      })
-
-      if (dbError) {
-        // If technicians insert fails, show clear error with instructions
-        throw new Error(
-          `Auth user created but DB insert failed: ${dbError.message}. ` +
-          `Please run this SQL in Supabase: INSERT INTO technicians (id, email, name, phone, role) VALUES ('${authData.user.id}', '${formData.email}', '${formData.name}', '${formData.phone || ''}', '${formData.role}');`
-        )
-      }
-
-      alert('Technician created successfully!')
-      setFormData({ email: '', password: '', name: '', phone: '', role: 'technician', cities: '' })
-      setShowForm(false)
-      fetchTechnicians()
-    } catch (err: any) {
-      alert('Error: ' + err.message)
-    } finally { setCreating(false) }
+  const deleteIssue = async () => {
+    if (!confirm('Delete this issue?')) return
+    await supabase.from('issues').delete().eq('id',issueId)
+    router.push('/admin')
   }
 
-  const handleDelete = async (id: string, email: string) => {
-    if (!confirm(`Delete technician ${email}?`)) return
-    const { error } = await supabase.from('technicians').delete().eq('id', id)
-    if (error) alert('Error: ' + error.message)
-    else { alert('Deleted successfully!'); fetchTechnicians() }
-  }
+  const logout = async () => { await supabase.auth.signOut(); router.push('/login') }
 
-  const startEditCities = (tech: TechWithCities) => {
-    setEditingCities(prev => ({ ...prev, [tech.id]: tech.cities || '' }))
-  }
-
-  const saveCities = async (techId: string) => {
-    setSavingCities(techId)
-    const { error } = await supabase.from('technicians').update({ cities: editingCities[techId] }).eq('id', techId)
-    setSavingCities(null)
-    if (error) { alert('Error: ' + error.message); return }
-    setEditingCities(prev => { const n = { ...prev }; delete n[techId]; return n })
-    fetchTechnicians()
-  }
-
-  const cancelEdit = (techId: string) => {
-    setEditingCities(prev => { const n = { ...prev }; delete n[techId]; return n })
-  }
-
-  const roleColors: Record<string, string> = {
-    admin: 'bg-red-500/20 text-red-400 border-red-500/30',
-    manager: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
-    technician: 'bg-green-500/20 text-green-400 border-green-500/30',
-  }
-
-  if (loading) return (
-    <div className="min-h-screen flex items-center justify-center bg-[#080810]">
-      <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-500"></div>
+  if (loading||!issue) return (
+    <div style={{ height:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', background:'#07070f' }}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{ width:'34px', height:'34px', border:'2px solid #22d3ee', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
     </div>
   )
 
+  const p = PC[issue.priority]??{c:'#9ca3af',bg:'rgba(156,163,175,.1)'}
+  const s = SC[issue.status]  ??{c:'#9ca3af',bg:'rgba(156,163,175,.1)'}
+
   return (
-    <div className="min-h-screen bg-[#080810]">
-      <header className="bg-[#0a0a12] border-b border-white/8 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" onClick={() => router.push('/admin')} className="text-gray-400 hover:text-white">
-              <ArrowLeft className="h-4 w-4 mr-2" />Back
-            </Button>
-            <h1 className="text-xl font-bold text-white">Technician Management</h1>
+    <AppShell role="admin" userName={userName} onLogout={logout}>
+      <style>{S}</style>
+
+      <div style={{ flex:1, overflowY:'auto', padding:'24px', minWidth:0 }}>
+        {/* breadcrumb + actions */}
+        <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'20px', animation:'fu .3s ease' }}>
+          <div style={{ display:'flex', alignItems:'center', gap:'7px' }}>
+            <button onClick={() => router.back()} style={{ display:'flex', alignItems:'center', gap:'5px', background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,.3)', fontSize:'12px', fontFamily:'inherit', padding:0 }}>
+              <ArrowLeft size={13} />Back
+            </button>
+            <span style={{ color:'rgba(255,255,255,.12)' }}>·</span>
+            <span style={{ fontSize:'12px', color:'rgba(255,255,255,.4)', fontFamily:"'Syne',sans-serif", fontWeight:'700' }}>{issue.vehicle_no}</span>
           </div>
-          <Button onClick={() => setShowForm(!showForm)} className="bg-blue-600 hover:bg-blue-700">
-            <Plus className="h-4 w-4 mr-2" />Add Technician
-          </Button>
+          <div style={{ display:'flex', gap:'6px' }}>
+            <button className="act" style={{ background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', color:'rgba(255,255,255,.4)' }}>
+              <Edit size={12} />Edit
+            </button>
+            <button className="act" onClick={deleteIssue} style={{ background:'rgba(239,68,68,.08)', border:'1px solid rgba(239,68,68,.15)', color:'#f87171' }}>
+              <Trash2 size={12} />Delete
+            </button>
+          </div>
         </div>
-      </header>
 
-      <main className="max-w-5xl mx-auto px-4 py-8 space-y-6">
-        {/* Create Form */}
-        {showForm && (
-          <div className="bg-[#0d0d16] border border-white/10 rounded-2xl p-6">
-            <h2 className="text-lg font-bold text-white mb-5">Add New Technician</h2>
-            <form onSubmit={handleCreateTechnician} className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div style={{ display:'grid', gridTemplateColumns:'1fr min(300px,35%)', gap:'14px', alignItems:'start' }}>
+          {/* ── Left ── */}
+          <div style={{ display:'flex', flexDirection:'column', gap:'13px' }}>
+            <div className="sec" style={{ animation:'fu .4s ease' }}>
+              <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'16px' }}>
                 <div>
-                  <Label className="text-gray-400">Full Name *</Label>
-                  <Input value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })}
-                    placeholder="John Doe" required className="mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600" />
+                  <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:'24px', fontWeight:'800', color:'#fff', lineHeight:1, letterSpacing:'-0.3px' }}>{issue.vehicle_no}</h1>
+                  <p style={{ fontSize:'13px', color:'rgba(255,255,255,.4)', marginTop:'3px' }}>{issue.client}</p>
                 </div>
-                <div>
-                  <Label className="text-gray-400">Email *</Label>
-                  <Input type="email" value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })}
-                    placeholder="john@example.com" required className="mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600" />
-                </div>
-                <div>
-                  <Label className="text-gray-400">Password *</Label>
-                  <Input type="password" value={formData.password} onChange={e => setFormData({ ...formData, password: e.target.value })}
-                    placeholder="Min 6 characters" minLength={6} required className="mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600" />
-                </div>
-                <div>
-                  <Label className="text-gray-400">Phone Number</Label>
-                  <Input value={formData.phone} onChange={e => setFormData({ ...formData, phone: e.target.value })}
-                    placeholder="+91 98765 43210" className="mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600" />
-                </div>
-                <div>
-                  <Label className="text-gray-400">Role *</Label>
-                  <select value={formData.role} onChange={e => setFormData({ ...formData, role: e.target.value })}
-                    className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
-                    <option value="technician">Technician</option>
-                    <option value="manager">Manager</option>
-                    <option value="admin">Admin</option>
-                  </select>
-                </div>
-                <div>
-                  <Label className="text-gray-400 flex items-center gap-1"><MapPin className="h-3.5 w-3.5" />Cities (comma separated)</Label>
-                  <Input value={formData.cities} onChange={e => setFormData({ ...formData, cities: e.target.value })}
-                    placeholder="Mumbai, Pune, Thane" className="mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600" />
+                <div style={{ display:'flex', gap:'5px' }}>
+                  <span style={{ fontSize:'11px', fontWeight:'700', padding:'3px 9px', borderRadius:'7px', color:s.c, background:s.bg }}>{issue.status}</span>
+                  <span style={{ fontSize:'11px', fontWeight:'700', padding:'3px 9px', borderRadius:'7px', color:p.c, background:p.bg }}>{issue.priority}</span>
                 </div>
               </div>
-              <div className="flex gap-3 pt-2">
-                <Button type="submit" disabled={creating} className="bg-blue-600 hover:bg-blue-700">
-                  {creating ? 'Creating...' : 'Create Technician'}
-                </Button>
-                <Button type="button" variant="outline" onClick={() => setShowForm(false)}
-                  className="border-white/10 text-gray-300 hover:bg-white/5">Cancel</Button>
+              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'8px', marginBottom:'9px' }}>
+                {[{lbl:'CLIENT',val:issue.client},{lbl:'POC',val:issue.poc_name||'—'},{lbl:'CONTACT',val:issue.poc_number||'—'},{lbl:'CITY',val:issue.city?(issue.city+(issue.location?' · '+issue.location:'')):'—'}].map(x=>(
+                  <div key={x.lbl} className="ibox">
+                    <p style={{ fontSize:'9px', color:'rgba(255,255,255,.22)', letterSpacing:'1.2px', marginBottom:'5px' }}>{x.lbl}</p>
+                    <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff' }}>{x.val}</p>
+                  </div>
+                ))}
               </div>
-            </form>
-          </div>
-        )}
+              <div className="ibox">
+                <p style={{ fontSize:'9px', color:'rgba(255,255,255,.22)', letterSpacing:'1.2px', marginBottom:'5px' }}>ISSUE DESCRIPTION</p>
+                <p style={{ fontSize:'13px', color:'rgba(255,255,255,.62)', lineHeight:1.6 }}>{issue.issue}</p>
+              </div>
+            </div>
 
-        {/* Technicians List */}
-        <div className="bg-[#0d0d16] border border-white/10 rounded-2xl overflow-hidden">
-          <div className="px-6 py-4 border-b border-white/8">
-            <h2 className="text-lg font-bold text-white">All Technicians ({technicians.length})</h2>
-          </div>
-          <div className="divide-y divide-white/5">
-            {technicians.length === 0 ? (
-              <p className="text-center text-gray-500 py-12">No technicians found. Add your first technician.</p>
-            ) : (
-              technicians.map(tech => (
-                <div key={tech.id} className="p-5 hover:bg-white/2 transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-3 mb-2 flex-wrap">
-                        <h3 className="font-bold text-white text-lg">{tech.name}</h3>
-                        <span className={`text-xs px-2.5 py-0.5 rounded-full border font-medium ${roleColors[tech.role]}`}>
-                          {tech.role}
-                        </span>
-                      </div>
-                      <div className="flex flex-wrap gap-4 text-sm text-gray-400 mb-3">
-                        <span className="flex items-center gap-1.5"><Mail className="h-3.5 w-3.5" />{tech.email}</span>
-                        {tech.phone && <span className="flex items-center gap-1.5"><Phone className="h-3.5 w-3.5" />{tech.phone}</span>}
-                      </div>
+            {/* status actions */}
+            <div className="sec" style={{ animation:'fu .4s ease .08s both' }}>
+              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'10px' }}>Update Status</p>
+              <div style={{ display:'flex', gap:'7px', flexWrap:'wrap' }}>
+                {issue.status==='pending'     && <button className="act" onClick={()=>updateStatus('assigned')} disabled={updating} style={{ background:'rgba(34,211,238,.08)',border:'1px solid rgba(34,211,238,.18)',color:'#22d3ee' }}><PlayCircle size={13} />Assign</button>}
+                {issue.status==='assigned'    && <button className="act" onClick={()=>updateStatus('in-progress')} disabled={updating} style={{ background:'rgba(167,139,250,.08)',border:'1px solid rgba(167,139,250,.18)',color:'#a78bfa' }}><PlayCircle size={13} />Start Work</button>}
+                {issue.status==='in-progress' && <button className="act" onClick={()=>updateStatus('completed')} disabled={updating} style={{ background:'rgba(74,222,128,.08)',border:'1px solid rgba(74,222,128,.18)',color:'#4ade80' }}><CheckCircle size={13} />Complete</button>}
+                <button className="act" onClick={()=>updateStatus('cancelled')} disabled={updating} style={{ background:'rgba(239,68,68,.07)',border:'1px solid rgba(239,68,68,.14)',color:'#f87171' }}><XCircle size={13} />Cancel</button>
+              </div>
+            </div>
 
-                      {/* Cities editing */}
-                      <div className="flex items-center gap-2">
-                        <MapPin className="h-3.5 w-3.5 text-gray-500 shrink-0" />
-                        {editingCities[tech.id] !== undefined ? (
-                          <div className="flex items-center gap-2 flex-1">
-                            <Input
-                              value={editingCities[tech.id]}
-                              onChange={e => setEditingCities(prev => ({ ...prev, [tech.id]: e.target.value }))}
-                              placeholder="Mumbai, Pune, Thane"
-                              className="h-8 text-sm bg-white/5 border-white/10 text-white flex-1"
-                            />
-                            <Button size="sm" onClick={() => saveCities(tech.id)}
-                              disabled={savingCities === tech.id}
-                              className="h-8 w-8 p-0 bg-green-600 hover:bg-green-700">
-                              <Check className="h-3.5 w-3.5" />
-                            </Button>
-                            <Button size="sm" variant="ghost" onClick={() => cancelEdit(tech.id)}
-                              className="h-8 w-8 p-0 text-gray-400 hover:text-white">
-                              <X className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            {tech.cities ? (
-                              <div className="flex gap-1.5 flex-wrap">
-                                {tech.cities.split(',').map(c => c.trim()).filter(Boolean).map(city => (
-                                  <span key={city} className="text-xs bg-blue-500/15 text-blue-300 border border-blue-500/20 px-2 py-0.5 rounded-full">
-                                    {city}
-                                  </span>
-                                ))}
-                              </div>
-                            ) : (
-                              <span className="text-xs text-gray-600 italic">No cities assigned</span>
-                            )}
-                            <button onClick={() => startEditCities(tech)}
-                              className="text-gray-500 hover:text-blue-400 transition-colors ml-1">
-                              <Edit2 className="h-3.5 w-3.5" />
-                            </button>
-                          </div>
-                        )}
-                      </div>
+            {/* photos */}
+            <div className="sec" style={{ animation:'fu .4s ease .15s both' }}>
+              <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff', marginBottom:'12px' }}>Photos <span style={{ color:'rgba(255,255,255,.28)', fontWeight:'500', fontSize:'11px' }}>{photos.length}</span></p>
+              {photos.length===0 ? (
+                <p style={{ textAlign:'center', color:'rgba(255,255,255,.18)', fontSize:'12px', padding:'18px 0' }}>No photos uploaded yet</p>
+              ) : (
+                <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'7px' }}>
+                  {photos.map(ph => (
+                    <div key={ph.id} style={{ aspectRatio:'1', borderRadius:'9px', overflow:'hidden', position:'relative', border:'1px solid rgba(255,255,255,.06)' }}>
+                      <img src={ph.photo_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
+                      <div style={{ position:'absolute', bottom:0, left:0, right:0, background:'linear-gradient(to top,rgba(0,0,0,.65),transparent)', padding:'5px', fontSize:'9px', color:'rgba(255,255,255,.7)', textTransform:'capitalize', fontWeight:'700' }}>{ph.photo_type}</div>
                     </div>
-                    <Button variant="destructive" size="sm" onClick={() => handleDelete(tech.id, tech.email)}
-                      className="shrink-0 h-8 w-8 p-0">
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* ── Right ── */}
+          <div style={{ display:'flex', flexDirection:'column', gap:'10px', animation:'fu .4s ease .06s both' }}>
+            {/* assigned tech */}
+            <div className="sec">
+              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'12px' }}>Assigned To</p>
+              {tech ? (
+                <div>
+                  <div style={{ display:'flex', alignItems:'center', gap:'10px', marginBottom:'10px' }}>
+                    <div style={{ width:'34px', height:'34px', borderRadius:'50%', background:'linear-gradient(135deg,#22d3ee,#6366f1)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:'13px', fontWeight:'800', color:'#000', flexShrink:0 }}>
+                      {tech.name[0]?.toUpperCase()}
+                    </div>
+                    <div style={{ minWidth:0 }}>
+                      <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{tech.name}</p>
+                      <p style={{ fontSize:'10px', color:'rgba(255,255,255,.3)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{tech.email}</p>
+                    </div>
+                  </div>
+                  {tech.phone && (
+                    <button onClick={() => window.open(`tel:${tech.phone}`,'_self')}
+                      style={{ width:'100%', height:'34px', borderRadius:'9px', background:'rgba(251,191,36,.07)', border:'1px solid rgba(251,191,36,.16)', color:'#fbbf24', fontSize:'11px', fontWeight:'600', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'5px', fontFamily:'inherit' }}>
+                      <Phone size={11} />Call Technician
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <p style={{ fontSize:'12px', color:'rgba(255,255,255,.2)', textAlign:'center', padding:'10px 0' }}>Not assigned</p>
+              )}
+            </div>
+
+            {/* GPS */}
+            {issue.latitude && issue.longitude && (
+              <div className="sec">
+                <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'10px' }}>Location</p>
+                <button onClick={() => window.open(`https://maps.google.com/maps?q=${issue.latitude},${issue.longitude}`,'_blank')}
+                  style={{ width:'100%', height:'34px', borderRadius:'9px', background:'rgba(34,211,238,.07)', border:'1px solid rgba(34,211,238,.15)', color:'#22d3ee', fontSize:'11px', fontWeight:'600', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center', gap:'5px', fontFamily:'inherit' }}>
+                  <MapPin size={11} />Open in Maps
+                </button>
+                <p style={{ fontSize:'10px', color:'rgba(255,255,255,.18)', marginTop:'7px', textAlign:'center', fontFamily:'monospace' }}>
+                  {issue.latitude.toFixed(6)}, {issue.longitude.toFixed(6)}
+                </p>
+              </div>
+            )}
+
+            {/* timeline */}
+            <div className="sec">
+              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'12px' }}>Timeline</p>
+              {[
+                { lbl:'Created',   val:formatDateTime(issue.created_at),    c:'#22d3ee' },
+                issue.started_at  ?{lbl:'Started',   val:formatDateTime(issue.started_at!),    c:'#a78bfa'}:null,
+                issue.completed_at?{lbl:'Completed', val:formatDateTime(issue.completed_at!),   c:'#4ade80'}:null,
+              ].filter(Boolean).map(t=>(
+                <div key={t!.lbl} style={{ display:'flex', alignItems:'flex-start', gap:'8px', marginBottom:'9px' }}>
+                  <div style={{ width:'6px', height:'6px', borderRadius:'50%', background:t!.c, marginTop:'3px', flexShrink:0, boxShadow:`0 0 5px ${t!.c}70` }} />
+                  <div>
+                    <p style={{ fontSize:'10px', color:'rgba(255,255,255,.25)' }}>{t!.lbl}</p>
+                    <p style={{ fontSize:'11px', color:'rgba(255,255,255,.5)', fontWeight:'600' }}>{t!.val}</p>
                   </div>
                 </div>
-              ))
-            )}
+              ))}
+            </div>
           </div>
         </div>
-      </main>
-    </div>
+      </div>
+    </AppShell>
   )
 }
