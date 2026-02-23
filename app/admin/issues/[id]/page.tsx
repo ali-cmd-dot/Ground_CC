@@ -1,317 +1,346 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { useRouter, useParams } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { AppShell } from '@/components/layout/AppShell'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import {
-  Navigation, Camera, PlayCircle, CheckCircle,
-  MapPin, Phone, AlertCircle, RefreshCw, Locate,
-  ArrowUpRight,
+  ArrowLeft, MapPin, Phone, User, Clock,
+  AlertCircle, CheckCircle, XCircle, PlayCircle,
+  Camera, Edit, Trash2, Package, FileText, PenTool
 } from 'lucide-react'
-import type { Issue } from '@/lib/types'
+import type { Issue, IssuePhoto, DigitalSignature, PartsUsage } from '@/lib/types'
+import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
 
-type IssueD = Issue & { distance?: number }
-
-const PC: Record<string,{c:string;bg:string}> = {
-  urgent:{ c:'#f87171', bg:'rgba(248,113,113,.12)' },
-  high:  { c:'#fb923c', bg:'rgba(251,146,60,.12)'  },
-  medium:{ c:'#fbbf24', bg:'rgba(251,191,36,.12)'  },
-  low:   { c:'#4ade80', bg:'rgba(74,222,128,.12)'  },
-}
-const SC: Record<string,{c:string;bg:string}> = {
-  assigned:     { c:'#22d3ee', bg:'rgba(34,211,238,.1)'  },
-  'in-progress':{ c:'#a78bfa', bg:'rgba(167,139,250,.12)'},
-}
-
-function greet() {
-  const h = new Date().getHours()
-  return h < 12 ? 'Good Morning' : h < 17 ? 'Good Afternoon' : 'Good Evening'
-}
-
-const S = `
-@keyframes fu{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-@keyframes spin{to{transform:rotate(360deg)}}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
-*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px}
-.icard{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:16px;padding:16px;cursor:pointer;transition:all .2s}
-.icard:hover,.icard:active{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1)}
-.ibtn{height:38px;border-radius:10px;border:none;font-size:12px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;font-family:'Outfit',system-ui,sans-serif;transition:all .15s}
-.ibtn:active{transform:scale(.97)}
-.tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap}
-`
-
-export default function TechnicianDashboard() {
+export default function IssueDetailPage() {
   const router = useRouter()
-  const [issues,     setIssues]     = useState<IssueD[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [techId,     setTechId]     = useState('')
-  const [techName,   setTechName]   = useState('')
-  const [checkedIn,  setCheckedIn]  = useState(false)
-  const [checkTime,  setCheckTime]  = useState<string|null>(null)
-  const [loc,        setLoc]        = useState<{lat:number;lng:number}|null>(null)
-  const [gettingLoc, setGettingLoc] = useState(false)
+  const params = useParams()
+  const issueId = params.id as string
 
-  useEffect(() => { initAuth() }, [])
-  useEffect(() => { if (techId) getLocation() }, [techId])
-  useEffect(() => { if (techId) fetchIssues() }, [loc, techId])
+  const [issue, setIssue] = useState<Issue | null>(null)
+  const [photos, setPhotos] = useState<IssuePhoto[]>([])
+  const [signature, setSignature] = useState<DigitalSignature | null>(null)
+  const [partsUsed, setPartsUsed] = useState<PartsUsage[]>([])
+  const [loading, setLoading] = useState(true)
+  const [updating, setUpdating] = useState(false)
+  const [technician, setTechnician] = useState<any>(null)
 
-  const dist = (a:number,b:number,c:number,d:number) => {
-    const R=6371,dLat=(c-a)*Math.PI/180,dLon=(d-b)*Math.PI/180
-    const x=Math.sin(dLat/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dLon/2)**2
-    return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))
-  }
+  useEffect(() => {
+    fetchIssueDetails()
+    fetchPhotos()
+    fetchSignature()
+    fetchPartsUsed()
+  }, [issueId])
 
-  const getLocation = () => {
-    setGettingLoc(true)
-    navigator.geolocation?.getCurrentPosition(
-      p => { setLoc({ lat:p.coords.latitude, lng:p.coords.longitude }); setGettingLoc(false) },
-      ()  => setGettingLoc(false),
-      { enableHighAccuracy:true, timeout:10000, maximumAge:0 }
-    )
-  }
-
-  const initAuth = async () => {
-    const { data:{ session } } = await supabase.auth.getSession()
-    if (!session) { router.push('/login'); return }
-    setTechId(session.user.id)
-    const { data:t } = await supabase.from('technicians').select('*').eq('id', session.user.id).single()
-    if (t) setTechName(t.name)
-    const today = new Date().toISOString().split('T')[0]
-    const { data:att } = await supabase.from('attendance').select('*')
-      .eq('technician_id', session.user.id).eq('date', today).is('check_out', null).single()
-    if (att) { setCheckedIn(true); setCheckTime(new Date(att.check_in).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})) }
-  }
-
-  const fetchIssues = async () => {
-    const { data } = await supabase.from('issues').select('*')
-      .eq('assigned_to', techId).in('status',['assigned','in-progress'])
-    if (data) {
-      const d = data.map(i => ({
-        ...i,
-        distance: (i.latitude&&i.longitude&&loc) ? dist(loc.lat,loc.lng,i.latitude,i.longitude) : 999999
-      }))
-      d.sort((a,b) => (a.distance??999999)-(b.distance??999999))
-      setIssues(d)
-    }
-    setLoading(false)
-  }
-
-  const checkIn = async () => {
-    if (!loc) { getLocation(); return }
-    const today = new Date().toISOString().split('T')[0]
-    const now = new Date().toISOString()
-    await supabase.from('attendance').insert({ technician_id:techId, check_in:now, latitude:loc.lat, longitude:loc.lng, date:today })
-    setCheckedIn(true)
-    setCheckTime(new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}))
-  }
-
-  const checkOut = async () => {
-    const today = new Date().toISOString().split('T')[0]
-    const { data } = await supabase.from('attendance').select('*')
-      .eq('technician_id',techId).eq('date',today).is('check_out',null).single()
-    if (data) {
-      const hours = (Date.now()-new Date(data.check_in).getTime())/3600000
-      await supabase.from('attendance').update({ check_out:new Date().toISOString(), total_hours:hours }).eq('id',data.id)
-      setCheckedIn(false); setCheckTime(null)
+  const fetchIssueDetails = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('issues')
+        .select('*, technicians:assigned_to (id, name, email, phone)')
+        .eq('id', issueId).single()
+      if (error) throw error
+      setIssue(data)
+      if (data.assigned_to) setTechnician((data as any).technicians)
+    } catch {
+      alert('Issue not found')
+      router.back()
+    } finally {
+      setLoading(false)
     }
   }
 
-  const startWork = async (e:React.MouseEvent, id:string) => {
-    e.stopPropagation()
-    await supabase.from('issues').update({ status:'in-progress', started_at:new Date().toISOString() }).eq('id',id)
-    fetchIssues()
+  const fetchPhotos = async () => {
+    const { data } = await supabase.from('issue_photos').select('*').eq('issue_id', issueId).order('taken_at', { ascending: false })
+    if (data) setPhotos(data)
   }
 
-  const navigate = (e:React.MouseEvent, issue:Issue) => {
-    e.stopPropagation()
-    const url = (issue.latitude&&issue.longitude)
-      ? `https://www.google.com/maps/dir/?api=1&destination=${issue.latitude},${issue.longitude}&travelmode=driving`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${issue.location||''} ${issue.city||''}`)}`
-    window.open(url,'_blank')
+  const fetchSignature = async () => {
+    const { data } = await supabase.from('digital_signatures').select('*').eq('issue_id', issueId).maybeSingle()
+    if (data) setSignature(data)
   }
 
-  const logout = async () => { await supabase.auth.signOut(); router.push('/login') }
+  const fetchPartsUsed = async () => {
+    const { data } = await supabase.from('parts_usage')
+      .select('*, inventory_items(name, unit_price)').eq('issue_id', issueId)
+    if (data) setPartsUsed(data)
+  }
 
-  const inProg = issues.filter(i => i.status==='in-progress').length
+  const updateStatus = async (newStatus: string) => {
+    setUpdating(true)
+    try {
+      const updates: any = { status: newStatus }
+      if (newStatus === 'in-progress' && !issue?.started_at) updates.started_at = new Date().toISOString()
+      if (newStatus === 'completed' && !issue?.completed_at) updates.completed_at = new Date().toISOString()
+      const { error } = await supabase.from('issues').update(updates).eq('id', issueId)
+      if (error) throw error
+      fetchIssueDetails()
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally {
+      setUpdating(false)
+    }
+  }
 
-  if (loading) return (
-    <div style={{ height:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', background:'#07070f' }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{ width:'34px', height:'34px', border:'2px solid #22d3ee', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
-    </div>
-  )
+  const deleteIssue = async () => {
+    if (!confirm('Delete this issue?')) return
+    const { error } = await supabase.from('issues').delete().eq('id', issueId)
+    if (error) alert('Error: ' + error.message)
+    else { alert('Deleted!'); router.push('/admin') }
+  }
+
+  const handleAssignTech = async (techId: string) => {
+    const { error } = await supabase.from('issues').update({
+      assigned_to: techId || null, status: techId ? 'assigned' : 'pending'
+    }).eq('id', issueId)
+    if (!error) fetchIssueDetails()
+  }
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary"></div></div>
+  if (!issue) return null
+
+  const partsCost = partsUsed.reduce((s, p) => s + (p.quantity * (p.unit_price || (p as any).inventory_items?.unit_price || 0)), 0)
 
   return (
-    <AppShell role="technician" userName={techName} onLogout={logout}>
-      <style>{S}</style>
-
-      <div style={{ flex:1, overflowY:'auto', padding:'28px', minWidth:0 }}>
-
-        {/* ── Greeting ── */}
-        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:'24px', animation:'fu .4s ease' }}>
-          <div>
-            <p style={{ fontSize:'11px', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'2px', marginBottom:'5px' }}>{greet()}</p>
-            <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:'24px', fontWeight:'800', color:'#fff', lineHeight:1, letterSpacing:'-0.3px' }}>
-              {techName.split(' ')[0]} 👋
-            </h1>
-          </div>
-          <div style={{ display:'flex', gap:'6px' }}>
-            <button onClick={getLocation} disabled={gettingLoc}
-              style={{ height:'32px', padding:'0 10px', borderRadius:'8px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.06)', color: loc?'#4ade80':'rgba(255,255,255,.3)', cursor:'pointer', display:'flex', alignItems:'center', gap:'5px', fontSize:'11px', fontFamily:'inherit' }}>
-              <Locate size={12} style={{ animation:gettingLoc?'spin 1s linear infinite':'none' }} />
-              {loc ? `${loc.lat.toFixed(3)}, ${loc.lng.toFixed(3)}` : 'Get GPS'}
-            </button>
-            <button onClick={fetchIssues}
-              style={{ width:'32px', height:'32px', borderRadius:'8px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.06)', color:'rgba(255,255,255,.3)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-              <RefreshCw size={12} />
-            </button>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      <header className="bg-white dark:bg-gray-800 border-b sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <Button variant="ghost" onClick={() => router.back()}><ArrowLeft className="h-4 w-4 mr-2" />Back</Button>
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" onClick={() => router.push(`/admin/issues/${issueId}/edit`)}>
+              <Edit className="h-4 w-4 mr-2" />Edit
+            </Button>
+            <Button variant="destructive" size="sm" onClick={deleteIssue}>
+              <Trash2 className="h-4 w-4 mr-2" />Delete
+            </Button>
           </div>
         </div>
+      </header>
 
-        {/* ── Attendance + stats ── */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr 1fr 1fr', gap:'12px', marginBottom:'24px', animation:'fu .4s ease .07s both' }}>
+      <main className="max-w-7xl mx-auto px-4 py-8">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left - Main Info */}
+          <div className="lg:col-span-2 space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="text-2xl">{issue.vehicle_no}</CardTitle>
+                  <div className="flex gap-2 flex-wrap">
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium text-white ${getStatusColor(issue.status)}`}>{issue.status}</span>
+                    <span className={`px-3 py-1 rounded-full text-sm font-medium text-white ${getPriorityColor(issue.priority)}`}>{issue.priority}</span>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div><p className="text-muted-foreground">Client</p><p className="font-medium">{issue.client}</p></div>
+                  {issue.poc_name && <div><p className="text-muted-foreground">POC</p><p className="font-medium">{issue.poc_name}</p></div>}
+                  {issue.poc_number && <div><p className="text-muted-foreground">Contact</p>
+                    <a href={`tel:${issue.poc_number}`} className="font-medium text-blue-600 flex items-center gap-1">
+                      <Phone className="h-3 w-3" />{issue.poc_number}
+                    </a>
+                  </div>}
+                  {issue.city && <div><p className="text-muted-foreground">Location</p>
+                    <p className="font-medium flex items-center gap-1"><MapPin className="h-3 w-3" />{issue.city}{issue.location && ` - ${issue.location}`}</p>
+                  </div>}
+                  {issue.availability && <div><p className="text-muted-foreground">Availability</p><p className="font-medium">{issue.availability}</p></div>}
+                  {issue.days && <div><p className="text-muted-foreground">Days</p><p className="font-medium">{issue.days}</p></div>}
+                </div>
 
-          {/* attendance — 2 cols */}
-          <div style={{
-            gridColumn:'span 2', padding:'20px',
-            borderRadius:'16px',
-            background: checkedIn
-              ? 'linear-gradient(135deg,rgba(4,47,46,.9),rgba(6,78,59,.6))'
-              : 'linear-gradient(135deg,rgba(12,12,28,.9),rgba(15,23,42,.8))',
-            border:`1px solid ${checkedIn?'rgba(34,211,238,.2)':'rgba(255,255,255,.06)'}`,
-            display:'flex', alignItems:'center', justifyContent:'space-between', gap:'12px',
-          }}>
-            <div>
-              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.28)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'8px' }}>Attendance</p>
-              <div style={{ display:'flex', alignItems:'center', gap:'8px', marginBottom:'3px' }}>
-                {checkedIn && <span style={{ width:'7px', height:'7px', borderRadius:'50%', background:'#4ade80', boxShadow:'0 0 8px #4ade80', display:'inline-block', animation:'pulse 2s infinite' }} />}
-                <p style={{ fontFamily:"'Syne',sans-serif", fontSize:'18px', fontWeight:'800', color:'#fff' }}>
-                  {checkedIn ? 'Checked In' : 'Not Checked In'}
-                </p>
-              </div>
-              {checkedIn&&checkTime && <p style={{ fontSize:'11px', color:'rgba(255,255,255,.3)' }}>Since {checkTime}</p>}
-            </div>
-            <button onClick={checkedIn ? checkOut : checkIn}
-              style={{ padding:'9px 16px', borderRadius:'10px', border:`1px solid ${checkedIn?'rgba(248,113,113,.3)':'rgba(34,211,238,.3)'}`, background:checkedIn?'rgba(248,113,113,.1)':'rgba(34,211,238,.1)', color:checkedIn?'#f87171':'#22d3ee', fontWeight:'700', fontSize:'12px', cursor:'pointer', fontFamily:'inherit', whiteSpace:'nowrap', flexShrink:0 }}>
-              {checkedIn ? 'Check Out' : 'Check In'}
-            </button>
-          </div>
+                <div>
+                  <p className="text-muted-foreground text-sm mb-1 flex items-center gap-1"><AlertCircle className="h-3 w-3" />Issue</p>
+                  <p className="text-sm bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">{issue.issue}</p>
+                </div>
 
-          {/* stat cards */}
-          {[
-            { val:issues.length, label:'Total',  sub:'Tasks today', c:'#22d3ee' },
-            { val:inProg,        label:'Active',  sub:'In progress', c:'#a78bfa' },
-          ].map(s => (
-            <div key={s.label} style={{ padding:'18px', borderRadius:'16px', background:'rgba(255,255,255,.025)', border:'1px solid rgba(255,255,255,.05)' }}>
-              <div style={{ width:'30px', height:'30px', borderRadius:'8px', background:`${s.c}14`, border:`1px solid ${s.c}22`, display:'flex', alignItems:'center', justifyContent:'center', marginBottom:'12px' }}>
-                <ArrowUpRight size={14} color={s.c} />
-              </div>
-              <p style={{ fontFamily:"'Syne',sans-serif", fontSize:'24px', fontWeight:'800', color:'#fff', lineHeight:1, marginBottom:'4px' }}>{s.val}</p>
-              <p style={{ fontSize:'12px', fontWeight:'600', color:'rgba(255,255,255,.4)' }}>{s.label}</p>
-              <p style={{ fontSize:'11px', color:'rgba(255,255,255,.2)' }}>{s.sub}</p>
-            </div>
-          ))}
-        </div>
+                {issue.latitude && issue.longitude && (
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-green-600" />
+                    <a href={`https://maps.google.com/?q=${issue.latitude},${issue.longitude}`} target="_blank"
+                      className="text-sm text-blue-600 hover:underline">
+                      View on Map ({Number(issue.latitude).toFixed(4)}, {Number(issue.longitude).toFixed(4)})
+                    </a>
+                  </div>
+                )}
 
-        {/* ── Issues grid ── */}
-        <div style={{ animation:'fu .4s ease .14s both' }}>
-          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'14px' }}>
-            <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff' }}>
-              Today's Tasks
-              <span style={{ fontSize:'11px', fontWeight:'500', color:'rgba(255,255,255,.28)', marginLeft:'6px' }}>{issues.length}</span>
-            </p>
-            {loc && issues.some(i => i.distance && i.distance < 999999) && (
-              <span style={{ fontSize:'10px', color:'#4ade80', background:'rgba(74,222,128,.08)', border:'1px solid rgba(74,222,128,.15)', padding:'3px 9px', borderRadius:'20px' }}>
-                ↑ Nearest first
-              </span>
+                <div className="grid grid-cols-2 gap-4 text-xs text-muted-foreground border-t pt-4">
+                  <div><p>Created</p><p className="font-medium">{formatDateTime(issue.created_at)}</p></div>
+                  {issue.started_at && <div><p>Started</p><p className="font-medium">{formatDateTime(issue.started_at)}</p></div>}
+                  {issue.completed_at && <div><p>Completed</p><p className="font-medium">{formatDateTime(issue.completed_at)}</p></div>}
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Status Actions */}
+            <Card>
+              <CardHeader><CardTitle>Update Status</CardTitle></CardHeader>
+              <CardContent>
+                <div className="flex flex-wrap gap-3">
+                  {issue.status === 'pending' && (
+                    <Button onClick={() => updateStatus('assigned')} disabled={updating}>
+                      <PlayCircle className="h-4 w-4 mr-2" />Mark Assigned
+                    </Button>
+                  )}
+                  {issue.status === 'assigned' && (
+                    <Button onClick={() => updateStatus('in-progress')} disabled={updating}>
+                      <PlayCircle className="h-4 w-4 mr-2" />Start Work
+                    </Button>
+                  )}
+                  {issue.status === 'in-progress' && (
+                    <Button onClick={() => updateStatus('completed')} disabled={updating} className="bg-green-600 hover:bg-green-700">
+                      <CheckCircle className="h-4 w-4 mr-2" />Complete
+                    </Button>
+                  )}
+                  <Button onClick={() => updateStatus('cancelled')} disabled={updating} variant="destructive">
+                    <XCircle className="h-4 w-4 mr-2" />Cancel
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+
+            {/* Parts Used */}
+            {partsUsed.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Package className="h-5 w-5" />Parts Used
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {partsUsed.map(p => (
+                      <div key={p.id} className="flex justify-between text-sm border-b pb-2">
+                        <span>{(p as any).inventory_items?.name || 'Unknown'} × {p.quantity}</span>
+                        <span className="font-medium">₹{(p.quantity * (p.unit_price || (p as any).inventory_items?.unit_price || 0)).toLocaleString('en-IN')}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between font-bold">
+                      <span>Total Parts Cost</span>
+                      <span>₹{partsCost.toLocaleString('en-IN')}</span>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Photos */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5" />Photos ({photos.length})
+                </CardTitle>
+              </CardHeader>
+              <CardContent>
+                {photos.length === 0 ? (
+                  <p className="text-center text-muted-foreground py-8">No photos uploaded yet</p>
+                ) : (
+                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                    {photos.map(photo => (
+                      <div key={photo.id} className="relative aspect-square rounded-lg overflow-hidden border">
+                        <img src={photo.photo_url} alt="Issue photo" className="w-full h-full object-cover" />
+                        <div className="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs p-2 capitalize">
+                          {photo.photo_type}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Digital Signature */}
+            {signature && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <PenTool className="h-5 w-5" />Client Signature
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="space-y-2">
+                    {signature.client_name && <p className="text-sm font-medium">Signed by: {signature.client_name}</p>}
+                    <img src={signature.signature_url} alt="Client signature" className="border rounded-lg max-h-32 bg-white" />
+                    <p className="text-xs text-muted-foreground">Signed at: {formatDateTime(signature.signed_at)}</p>
+                  </div>
+                </CardContent>
+              </Card>
             )}
           </div>
 
-          {issues.length === 0 ? (
-            <div style={{ padding:'48px 20px', textAlign:'center', background:'rgba(255,255,255,.02)', border:'1px solid rgba(255,255,255,.05)', borderRadius:'16px' }}>
-              <CheckCircle size={28} color="rgba(255,255,255,.1)" style={{ margin:'0 auto 8px' }} />
-              <p style={{ color:'rgba(255,255,255,.2)', fontSize:'13px' }}>No tasks assigned</p>
-            </div>
-          ) : (
-            <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill,minmax(320px,1fr))', gap:'12px' }}>
-              {issues.map((issue, idx) => {
-                const p = PC[issue.priority] ?? { c:'#9ca3af', bg:'rgba(156,163,175,.1)' }
-                const s = SC[issue.status]   ?? { c:'#9ca3af', bg:'rgba(156,163,175,.1)' }
-                const nearest = idx===0 && issue.distance!==undefined && issue.distance<999999
-                return (
-                  <div key={issue.id} className="icard"
-                    onClick={() => router.push(`/technician/issues/${issue.id}`)}>
-
-                    {/* top */}
-                    <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'10px' }}>
-                      <div style={{ display:'flex', alignItems:'center', gap:'9px', minWidth:0 }}>
-                        <div style={{ width:'32px', height:'32px', borderRadius:'9px', flexShrink:0, background:nearest?'rgba(74,222,128,.1)':'rgba(255,255,255,.05)', border:`1px solid ${nearest?'rgba(74,222,128,.22)':'rgba(255,255,255,.07)'}`, display:'flex', alignItems:'center', justifyContent:'center', fontSize:'12px', fontWeight:'800', color:nearest?'#4ade80':'rgba(255,255,255,.3)' }}>
-                          {idx+1}
-                        </div>
-                        <div style={{ minWidth:0 }}>
-                          <p style={{ fontFamily:"'Syne',sans-serif", fontWeight:'800', fontSize:'15px', color:'#fff', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{issue.vehicle_no}</p>
-                          <p style={{ fontSize:'11px', color:'rgba(255,255,255,.3)', overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>{issue.client}</p>
-                        </div>
+          {/* Right - Assignment & Quick Actions */}
+          <div className="space-y-6">
+            <Card>
+              <CardHeader><CardTitle>Assigned To</CardTitle></CardHeader>
+              <CardContent>
+                {technician ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
+                        <User className="h-6 w-6 text-primary" />
                       </div>
-                      <div style={{ display:'flex', flexDirection:'column', gap:'3px', flexShrink:0, marginLeft:'8px' }}>
-                        <span className="tag" style={{ color:s.c, background:s.bg }}>{issue.status}</span>
-                        <span className="tag" style={{ color:p.c, background:p.bg }}>{issue.priority}</span>
+                      <div>
+                        <p className="font-semibold">{technician.name}</p>
+                        <p className="text-sm text-muted-foreground">{technician.email}</p>
                       </div>
                     </div>
-
-                    {/* distance chip */}
-                    {issue.distance !== undefined && issue.distance < 999999 ? (
-                      <div style={{ display:'inline-flex', alignItems:'center', gap:'4px', background:nearest?'rgba(74,222,128,.07)':'rgba(255,255,255,.04)', border:`1px solid ${nearest?'rgba(74,222,128,.16)':'rgba(255,255,255,.06)'}`, borderRadius:'8px', padding:'3px 9px', marginBottom:'10px' }}>
-                        <Navigation size={10} color={nearest?'#4ade80':'rgba(255,255,255,.3)'} />
-                        <span style={{ fontSize:'11px', fontWeight:'700', color:nearest?'#4ade80':'rgba(255,255,255,.4)' }}>
-                          {issue.distance<1?`${(issue.distance*1000).toFixed(0)}m`:`${issue.distance.toFixed(1)}km`}
-                          {nearest?' · Nearest':''}
-                        </span>
-                      </div>
-                    ) : (
-                      <div style={{ display:'inline-flex', alignItems:'center', gap:'3px', marginBottom:'10px' }}>
-                        <AlertCircle size={10} color="rgba(255,255,255,.18)" />
-                        <span style={{ fontSize:'10px', color:'rgba(255,255,255,.18)' }}>No GPS</span>
-                      </div>
+                    {technician.phone && (
+                      <a href={`tel:${technician.phone}`}>
+                        <Button variant="outline" className="w-full" size="sm">
+                          <Phone className="h-4 w-4 mr-2" />Call Technician
+                        </Button>
+                      </a>
                     )}
-
-                    {/* issue desc */}
-                    <p style={{ fontSize:'12px', color:'rgba(255,255,255,.38)', marginBottom:'10px', lineHeight:1.5, display:'-webkit-box', WebkitLineClamp:2, WebkitBoxOrient:'vertical', overflow:'hidden' }}>
-                      {issue.issue}
-                    </p>
-
-                    {/* meta */}
-                    <div style={{ display:'flex', gap:'10px', marginBottom:'13px', flexWrap:'wrap' }}>
-                      {(issue.city||issue.location) && <span style={{ fontSize:'10px', color:'rgba(255,255,255,.25)', display:'flex', alignItems:'center', gap:'3px' }}><MapPin size={9} />{issue.city}{issue.location?` · ${issue.location}`:''}</span>}
-                      {issue.poc_name && <span style={{ fontSize:'10px', color:'rgba(255,255,255,.25)', display:'flex', alignItems:'center', gap:'3px' }}><Phone size={9} />{issue.poc_name}{issue.poc_number?` · ${issue.poc_number}`:''}</span>}
-                    </div>
-
-                    {/* actions */}
-                    <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'7px' }}>
-                      <button className="ibtn" onClick={e => navigate(e, issue)}
-                        style={{ background:'rgba(34,211,238,.08)', border:'1px solid rgba(34,211,238,.18)', color:'#22d3ee' }}>
-                        <Navigation size={12} />Navigate
-                      </button>
-                      <button className="ibtn" onClick={e => { e.stopPropagation(); router.push(`/technician/issues/${issue.id}`) }}
-                        style={{ background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', color:'rgba(255,255,255,.5)' }}>
-                        <Camera size={12} />Details
-                      </button>
-                      {issue.status==='assigned' && (
-                        <button className="ibtn" style={{ gridColumn:'1/-1', background:'rgba(251,146,60,.1)', border:'1px solid rgba(251,146,60,.2)', color:'#fb923c' }}
-                          onClick={e => startWork(e, issue.id)}>
-                          <PlayCircle size={12} />Start Work
-                        </button>
-                      )}
-                    </div>
+                    <Button variant="outline" className="w-full" size="sm" onClick={() => handleAssignTech('')}>
+                      Unassign
+                    </Button>
                   </div>
-                )
-              })}
-            </div>
-          )}
+                ) : (
+                  <div className="text-center py-4">
+                    <p className="text-muted-foreground mb-3">Not assigned yet</p>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader><CardTitle>Quick Actions</CardTitle></CardHeader>
+              <CardContent className="space-y-2">
+                <Button variant="outline" className="w-full justify-start"
+                  onClick={() => router.push(`/admin/issues/${issueId}/edit`)}>
+                  <Edit className="h-4 w-4 mr-2" />Edit Issue
+                </Button>
+                {issue.latitude && issue.longitude && (
+                  <Button variant="outline" className="w-full justify-start" asChild>
+                    <a href={`https://maps.google.com/?q=${issue.latitude},${issue.longitude}`} target="_blank">
+                      <MapPin className="h-4 w-4 mr-2" />Open in Maps
+                    </a>
+                  </Button>
+                )}
+                <Button variant="outline" className="w-full justify-start"
+                  onClick={() => router.push(`/admin/invoices`)}>
+                  <FileText className="h-4 w-4 mr-2" />Create Invoice
+                </Button>
+                {issue.poc_number && (
+                  <Button variant="outline" className="w-full justify-start" asChild>
+                    <a href={`tel:${issue.poc_number}`}>
+                      <Phone className="h-4 w-4 mr-2" />Call Client
+                    </a>
+                  </Button>
+                )}
+              </CardContent>
+            </Card>
+
+            {issue.last_rectification_status && (
+              <Card>
+                <CardHeader><CardTitle>Previous Status</CardTitle></CardHeader>
+                <CardContent>
+                  <p className="text-sm">{issue.last_rectification_status}</p>
+                  {issue.last_rectification_date && <p className="text-xs text-muted-foreground mt-1">{issue.last_rectification_date}</p>}
+                </CardContent>
+              </Card>
+            )}
+          </div>
         </div>
-      </div>
-    </AppShell>
+      </main>
+    </div>
   )
 }
