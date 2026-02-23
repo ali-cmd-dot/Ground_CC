@@ -3,272 +3,339 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { AppShell } from '@/components/layout/AppShell'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import {
-  ClipboardList, CheckCircle, Clock, Users, AlertTriangle,
-  Plus, Upload, Eye, Search, X, RefreshCw, MapPin, Phone,
-  ArrowUpRight, Package,
+  MapPin, Users, ClipboardList, LogOut,
+  Plus, CheckCircle, Clock, Eye,
+  Upload, UserPlus, Search, X, RefreshCw, AlertTriangle,
+  Package, FileText, BarChart2, CalendarDays
 } from 'lucide-react'
+import { NotificationBell } from '@/components/notifications/NotificationBell'
+import { ThemeToggle } from '@/components/theme/ThemeToggle'
 import type { Issue, Technician } from '@/lib/types'
-import { formatDateTime } from '@/lib/utils'
-
-/* ── colour maps ── */
-const PC: Record<string,{c:string;bg:string}> = {
-  urgent:{ c:'#f87171', bg:'rgba(248,113,113,.12)' },
-  high:  { c:'#fb923c', bg:'rgba(251,146,60,.12)'  },
-  medium:{ c:'#fbbf24', bg:'rgba(251,191,36,.12)'  },
-  low:   { c:'#4ade80', bg:'rgba(74,222,128,.12)'  },
-}
-const SC: Record<string,{c:string;bg:string}> = {
-  pending:     { c:'#fb923c', bg:'rgba(251,146,60,.12)' },
-  assigned:    { c:'#22d3ee', bg:'rgba(34,211,238,.1)'  },
-  'in-progress':{ c:'#a78bfa',bg:'rgba(167,139,250,.12)'},
-  completed:   { c:'#4ade80', bg:'rgba(74,222,128,.12)' },
-  cancelled:   { c:'#6b7280', bg:'rgba(107,114,128,.1)' },
-}
-
-const S = `
-@keyframes fu{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
-@keyframes spin{to{transform:rotate(360deg)}}
-*,*::before,*::after{box-sizing:border-box}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px}
-input,select,textarea{font-family:'Outfit',system-ui,sans-serif}
-input::placeholder{color:rgba(255,255,255,.18)}
-.row{display:flex;align-items:flex-start;gap:12px;padding:13px 16px;border-bottom:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .15s}
-.row:hover{background:rgba(255,255,255,.03)}
-.row:last-child{border-bottom:none}
-.tag{display:inline-flex;align-items:center;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;white-space:nowrap}
-.qcard{display:flex;flex-direction:column;align-items:flex-start;gap:6px;padding:16px;border-radius:14px;border:1px solid rgba(255,255,255,.06);background:rgba(255,255,255,.025);cursor:pointer;transition:all .2s;font-family:'Outfit',system-ui,sans-serif;text-align:left}
-.qcard:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.1);transform:translateY(-1px)}
-.statcard{padding:18px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.05)}
-`
+import { getStatusColor, getPriorityColor, formatDateTime } from '@/lib/utils'
 
 export default function AdminDashboard() {
   const router = useRouter()
-  const [issues,      setIssues]      = useState<Issue[]>([])
-  const [filtered,    setFiltered]    = useState<Issue[]>([])
+  const [issues, setIssues] = useState<Issue[]>([])
+  const [filteredIssues, setFilteredIssues] = useState<Issue[]>([])
   const [technicians, setTechnicians] = useState<Technician[]>([])
-  const [loading,     setLoading]     = useState(true)
-  const [search,      setSearch]      = useState('')
-  const [stFilter,    setStFilter]    = useState('all')
-  const [prFilter,    setPrFilter]    = useState('all')
-  const [userName,    setUserName]    = useState('')
-  const [stats,       setStats]       = useState({ total:0, pending:0, completed:0, techs:0 })
+  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
+  const [priorityFilter, setPriorityFilter] = useState('all')
+  const [currentUserId, setCurrentUserId] = useState('')
+  const [stats, setStats] = useState({
+    totalIssues: 0, pendingIssues: 0, completedIssues: 0,
+    activeTechnicians: 0, lowStockItems: 0
+  })
 
   useEffect(() => {
-    checkAuth(); fetchData()
-    const sub = supabase.channel('iss')
-      .on('postgres_changes',{ event:'*', schema:'public', table:'issues' }, fetchData)
+    checkAuth()
+    fetchData()
+    const sub = supabase.channel('issues_changes')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'issues' }, fetchData)
       .subscribe()
     return () => { sub.unsubscribe() }
   }, [])
 
   useEffect(() => {
     let f = issues
-    if (search)       f = f.filter(i =>
-      [i.vehicle_no,i.client,i.city,i.poc_name,i.poc_number].some(v => v?.toLowerCase().includes(search.toLowerCase()))
-    )
-    if (stFilter !== 'all') f = f.filter(i => i.status === stFilter)
-    if (prFilter !== 'all') f = f.filter(i => i.priority === prFilter)
-    setFiltered(f)
-  }, [issues, search, stFilter, prFilter])
+    if (searchTerm) {
+      f = f.filter(i =>
+        i.vehicle_no?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        i.client?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        i.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        i.poc_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        i.poc_number?.includes(searchTerm)
+      )
+    }
+    if (statusFilter !== 'all') f = f.filter(i => i.status === statusFilter)
+    if (priorityFilter !== 'all') f = f.filter(i => i.priority === priorityFilter)
+    setFilteredIssues(f)
+  }, [issues, searchTerm, statusFilter, priorityFilter])
 
   const checkAuth = async () => {
-    const { data:{ session } } = await supabase.auth.getSession()
+    const { data: { session } } = await supabase.auth.getSession()
     if (!session) { router.push('/login'); return }
-    const { data:t } = await supabase.from('technicians').select('*').eq('id', session.user.id).single()
-    if (t) setUserName(t.name)
+    setCurrentUserId(session.user.id)
+    const { data: t } = await supabase.from('technicians').select('role').eq('id', session.user.id).single()
     if (t?.role !== 'admin' && t?.role !== 'manager') router.push('/technician')
   }
 
   const fetchData = async () => {
-    const [ir, tr] = await Promise.all([
-      supabase.from('issues').select('*, technicians:assigned_to(name)').order('created_at',{ ascending:false }),
-      supabase.from('technicians').select('*'),
-    ])
-    if (ir.data) {
-      setIssues(ir.data)
-      setStats({ total: ir.data.length,
-        pending:   ir.data.filter(i => i.status==='pending'||i.status==='assigned').length,
-        completed: ir.data.filter(i => i.status==='completed').length,
-        techs:     tr.data?.length ?? 0 })
-    }
-    if (tr.data) setTechnicians(tr.data)
-    setLoading(false)
+    try {
+      const [issuesRes, techRes, inventoryRes] = await Promise.all([
+        supabase.from('issues').select('*, technicians:assigned_to (name)').order('created_at', { ascending: false }),
+        supabase.from('technicians').select('*'),
+        supabase.from('inventory_items').select('id, quantity, reorder_level')
+      ])
+
+      if (issuesRes.data) {
+        setIssues(issuesRes.data)
+        const lowStock = inventoryRes.data?.filter(i => i.quantity <= i.reorder_level).length || 0
+        setStats({
+          totalIssues: issuesRes.data.length,
+          pendingIssues: issuesRes.data.filter(i => i.status === 'pending' || i.status === 'assigned').length,
+          completedIssues: issuesRes.data.filter(i => i.status === 'completed').length,
+          activeTechnicians: techRes.data?.length || 0,
+          lowStockItems: lowStock
+        })
+      }
+      if (techRes.data) setTechnicians(techRes.data)
+    } catch (err) { console.error(err) }
+    finally { setLoading(false) }
   }
 
-  const assign = async (issueId:string, techId:string) => {
-    await supabase.from('issues').update({ assigned_to:techId, status:'assigned' }).eq('id', issueId)
-    fetchData()
+  const handleAssign = async (issueId: string, techId: string) => {
+    const { error } = await supabase.from('issues')
+      .update({ assigned_to: techId, status: 'assigned' }).eq('id', issueId)
+    if (error) alert('Error: ' + error.message)
+    else fetchData()
   }
 
-  const logout = async () => { await supabase.auth.signOut(); router.push('/login') }
+  const clearFilters = () => { setSearchTerm(''); setStatusFilter('all'); setPriorityFilter('all') }
+  const hasFilters = searchTerm || statusFilter !== 'all' || priorityFilter !== 'all'
+
+  const handleLogout = async () => { await supabase.auth.signOut(); router.push('/login') }
 
   if (loading) return (
-    <div style={{ height:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', background:'#07070f' }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{ width:'34px', height:'34px', border:'2px solid #22d3ee', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
+    <div className="min-h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900">
+      <div className="text-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto"></div>
+        <p className="mt-4 text-muted-foreground">Loading...</p>
+      </div>
     </div>
   )
 
-  const hasFilt = search || stFilter !== 'all' || prFilter !== 'all'
-
-  const STAT_CARDS = [
-    { label:'Total Issues',  val:stats.total,     icon:ClipboardList, c:'#22d3ee' },
-    { label:'Open',          val:stats.pending,   icon:Clock,         c:'#fbbf24' },
-    { label:'Completed',     val:stats.completed, icon:CheckCircle,   c:'#4ade80' },
-    { label:'Technicians',   val:stats.techs,     icon:Users,         c:'#a78bfa' },
+  const quickActions = [
+    { label: 'Create Issue', sub: 'Add manually', icon: Plus, color: 'blue', path: '/admin/issues/create' },
+    { label: 'Import CSV', sub: 'Bulk import', icon: Upload, color: 'green', path: '/admin/import' },
+    { label: 'Technicians', sub: 'Manage team', icon: UserPlus, color: 'purple', path: '/admin/technicians' },
+    { label: 'Live Map', sub: 'Track field team', icon: MapPin, color: 'orange', path: '/admin/map' },
+    { label: 'Issues Map', sub: 'Heatmap + distances', icon: BarChart2, color: 'red', path: '/admin/issues/map' },
+    { label: 'Inventory', sub: 'Parts & stock', icon: Package, color: 'teal', path: '/admin/inventory' },
+    { label: 'Invoices', sub: 'Billing & payments', icon: FileText, color: 'indigo', path: '/admin/invoices' },
+    { label: 'Analytics', sub: 'Reports & charts', icon: BarChart2, color: 'pink', path: '/admin/analytics' },
+    { label: 'Attendance', sub: 'Daily records', icon: CalendarDays, color: 'yellow', path: '/admin/attendance' },
   ]
 
+  const colorMap: Record<string, string> = {
+    blue: 'bg-blue-500/15 text-blue-400',
+    green: 'bg-green-500/15 text-green-400',
+    purple: 'bg-purple-500/15 text-purple-400',
+    orange: 'bg-orange-500/15 text-orange-400',
+    red: 'bg-red-500/15 text-red-400',
+    teal: 'bg-teal-500/15 text-teal-400',
+    indigo: 'bg-indigo-500/15 text-indigo-400',
+    pink: 'bg-pink-500/15 text-pink-400',
+    yellow: 'bg-yellow-500/15 text-yellow-400',
+  }
+
   return (
-    <AppShell role="admin" userName={userName} onLogout={logout}>
-      <style>{S}</style>
-
-      <div style={{ flex:1, overflowY:'auto', padding:'28px', minWidth:0 }}>
-        {/* ── Header ── */}
-        <div style={{ display:'flex', alignItems:'flex-end', justifyContent:'space-between', marginBottom:'24px', animation:'fu .4s ease' }}>
-          <div>
-            <p style={{ fontSize:'11px', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'2px', marginBottom:'5px' }}>Overview</p>
-            <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:'24px', fontWeight:'800', color:'#fff', lineHeight:1, letterSpacing:'-0.3px' }}>Dashboard</h1>
-          </div>
-          <div style={{ display:'flex', gap:'8px' }}>
-            <button onClick={fetchData}
-              style={{ height:'34px', padding:'0 12px', borderRadius:'9px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', color:'rgba(255,255,255,.4)', cursor:'pointer', display:'flex', alignItems:'center', gap:'5px', fontSize:'12px', fontFamily:'inherit' }}>
-              <RefreshCw size={12} />Refresh
-            </button>
-            <button onClick={() => router.push('/admin/issues/create')}
-              style={{ height:'34px', padding:'0 14px', borderRadius:'9px', background:'linear-gradient(135deg,#0ea5e9,#6366f1)', border:'none', color:'#fff', cursor:'pointer', display:'flex', alignItems:'center', gap:'6px', fontSize:'12px', fontWeight:'700', fontFamily:'inherit', boxShadow:'0 4px 18px rgba(34,211,238,.2)' }}>
-              <Plus size={13} />New Issue
-            </button>
+    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
+      {/* Header */}
+      <header className="bg-[#0a0a12] border-b border-white/8 sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div style={{ width: '40px', height: '40px', borderRadius: '10px', background: 'radial-gradient(circle, rgba(37,99,235,0.2) 0%, rgba(10,10,20,0.8) 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid rgba(37,99,235,0.2)', boxShadow: '0 0 20px rgba(37,99,235,0.15)' }}>
+                <img src="/cautio_shield.webp" alt="Cautio" style={{ width: '28px', height: '28px', objectFit: 'contain', filter: 'drop-shadow(0 0 6px rgba(37,99,235,0.5))' }} />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-white leading-tight">Cautio Admin</h1>
+                
+              </div>
+            </div>
+            <div className="flex gap-2 items-center">
+              {currentUserId && <NotificationBell userId={currentUserId} />}
+              <ThemeToggle />
+              <Button onClick={fetchData} variant="outline" size="sm"><RefreshCw className="h-4 w-4" /></Button>
+              <Button onClick={handleLogout} variant="outline" size="sm">
+                <LogOut className="h-4 w-4 mr-2" />Logout
+              </Button>
+            </div>
           </div>
         </div>
+      </header>
 
-        {/* ── Stat cards ── */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'12px', marginBottom:'20px' }}>
-          {STAT_CARDS.map((s, i) => (
-            <div key={s.label} className="statcard" style={{ animation:`fu .4s ease ${i*.07}s both` }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'14px' }}>
-                <div style={{ width:'32px', height:'32px', borderRadius:'8px', background:`${s.c}18`, border:`1px solid ${s.c}28`, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                  <s.icon size={15} color={s.c} />
-                </div>
-                <ArrowUpRight size={13} color="rgba(255,255,255,.12)" />
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Stats */}
+        <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Total Issues</CardTitle>
+              <ClipboardList className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent><div className="text-3xl font-bold">{stats.totalIssues}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Pending</CardTitle>
+              <Clock className="h-4 w-4 text-yellow-500" />
+            </CardHeader>
+            <CardContent><div className="text-3xl font-bold text-yellow-600">{stats.pendingIssues}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Completed</CardTitle>
+              <CheckCircle className="h-4 w-4 text-green-500" />
+            </CardHeader>
+            <CardContent><div className="text-3xl font-bold text-green-600">{stats.completedIssues}</div></CardContent>
+          </Card>
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Technicians</CardTitle>
+              <Users className="h-4 w-4 text-muted-foreground" />
+            </CardHeader>
+            <CardContent><div className="text-3xl font-bold">{stats.activeTechnicians}</div></CardContent>
+          </Card>
+          <Card className={stats.lowStockItems > 0 ? 'border-red-300' : ''}>
+            <CardHeader className="flex flex-row items-center justify-between pb-2">
+              <CardTitle className="text-sm font-medium">Low Stock</CardTitle>
+              <Package className={`h-4 w-4 ${stats.lowStockItems > 0 ? 'text-red-500' : 'text-muted-foreground'}`} />
+            </CardHeader>
+            <CardContent>
+              <div className={`text-3xl font-bold ${stats.lowStockItems > 0 ? 'text-red-600' : ''}`}>
+                {stats.lowStockItems}
               </div>
-              <p style={{ fontSize:'26px', fontFamily:"'Syne',sans-serif", fontWeight:'800', color:'#fff', lineHeight:1, marginBottom:'4px' }}>{s.val}</p>
-              <p style={{ fontSize:'12px', fontWeight:'600', color:'rgba(255,255,255,.4)' }}>{s.label}</p>
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* Quick Actions */}
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3 mb-8">
+          {quickActions.map(({ label, sub, icon: Icon, color, path }) => (
+            <div key={path}
+              className="group cursor-pointer rounded-xl border border-white/8 bg-white/3 hover:bg-white/6 hover:border-white/15 transition-all active:scale-95 p-4 text-center"
+              onClick={() => router.push(path)}>
+              <div className={`h-11 w-11 rounded-xl flex items-center justify-center mx-auto mb-3 ${colorMap[color]} group-hover:scale-110 transition-transform`}>
+                <Icon className="h-5 w-5" />
+              </div>
+              <h3 className="font-semibold text-sm text-white">{label}</h3>
+              <p className="text-xs text-gray-500 mt-0.5">{sub}</p>
             </div>
           ))}
         </div>
 
-        {/* ── Quick actions ── */}
-        <div style={{ display:'grid', gridTemplateColumns:'repeat(4,1fr)', gap:'10px', marginBottom:'24px' }}>
-          {[
-            { label:'Create Issue', sub:'Add manually', icon:Plus,   c:'#22d3ee', path:'/admin/issues/create'   },
-            { label:'Import CSV',   sub:'Bulk upload',  icon:Upload,  c:'#4ade80', path:'/admin/import'           },
-            { label:'Technicians',  sub:'Manage team',  icon:Users,   c:'#a78bfa', path:'/admin/technicians'      },
-            { label:'Issues Map',   sub:'View routes',  icon:MapPin,  c:'#fb923c', path:'/admin/issues/map'       },
-          ].map(item => (
-            <button key={item.path} className="qcard" onClick={() => router.push(item.path)}>
-              <div style={{ width:'30px', height:'30px', borderRadius:'8px', background:`${item.c}14`, border:`1px solid ${item.c}24`, display:'flex', alignItems:'center', justifyContent:'center' }}>
-                <item.icon size={14} color={item.c} />
+        {/* Issues List */}
+        <Card>
+          <CardHeader>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-center justify-between">
+                <CardTitle>
+                  All Issues
+                  <span className="ml-2 text-sm font-normal text-muted-foreground">
+                    ({filteredIssues.length}{hasFilters ? ` of ${issues.length}` : ''})
+                  </span>
+                </CardTitle>
+                <Button size="sm" onClick={() => router.push('/admin/issues/create')}>
+                  <Plus className="h-4 w-4 mr-2" />New Issue
+                </Button>
               </div>
-              <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff' }}>{item.label}</p>
-              <p style={{ fontSize:'11px', color:'rgba(255,255,255,.28)' }}>{item.sub}</p>
-            </button>
-          ))}
-        </div>
 
-        {/* ── Issues table ── */}
-        <div style={{ borderRadius:'16px', background:'rgba(255,255,255,.02)', border:'1px solid rgba(255,255,255,.05)', overflow:'hidden' }}>
-          {/* filters bar */}
-          <div style={{ padding:'14px 16px', borderBottom:'1px solid rgba(255,255,255,.04)', display:'flex', alignItems:'center', gap:'8px', flexWrap:'wrap' }}>
-            <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff', flexShrink:0 }}>
-              All Issues
-              <span style={{ fontSize:'11px', fontWeight:'500', color:'rgba(255,255,255,.25)', marginLeft:'6px' }}>
-                {filtered.length}{hasFilt ? ` / ${issues.length}` : ''}
-              </span>
-            </p>
-
-            {/* search */}
-            <div style={{ flex:1, minWidth:'140px', position:'relative' }}>
-              <Search size={12} style={{ position:'absolute', left:'9px', top:'50%', transform:'translateY(-50%)', color:'rgba(255,255,255,.2)', pointerEvents:'none' }} />
-              <input value={search} onChange={e => setSearch(e.target.value)}
-                placeholder="Search vehicle, client, city…"
-                style={{ width:'100%', height:'32px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', borderRadius:'8px', color:'#fff', fontSize:'12px', paddingLeft:'28px', paddingRight:'8px', outline:'none' }} />
-              {search && <button onClick={() => setSearch('')} style={{ position:'absolute', right:'7px', top:'50%', transform:'translateY(-50%)', background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,.3)' }}><X size={11} /></button>}
-            </div>
-
-            {/* status */}
-            <select value={stFilter} onChange={e => setStFilter(e.target.value)}
-              style={{ height:'32px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', borderRadius:'8px', color: stFilter!=='all'?'#22d3ee':'rgba(255,255,255,.35)', fontSize:'12px', padding:'0 8px', cursor:'pointer', outline:'none' }}>
-              {['all','pending','assigned','in-progress','completed','cancelled'].map(o => (
-                <option key={o} value={o} style={{ background:'#0b0b17' }}>{o==='all'?'All Status': o.charAt(0).toUpperCase()+o.slice(1)}</option>
-              ))}
-            </select>
-
-            {/* priority */}
-            <select value={prFilter} onChange={e => setPrFilter(e.target.value)}
-              style={{ height:'32px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.07)', borderRadius:'8px', color: prFilter!=='all'?'#22d3ee':'rgba(255,255,255,.35)', fontSize:'12px', padding:'0 8px', cursor:'pointer', outline:'none' }}>
-              {['all','urgent','high','medium','low'].map(o => (
-                <option key={o} value={o} style={{ background:'#0b0b17' }}>{o==='all'?'All Priority': o.charAt(0).toUpperCase()+o.slice(1)}</option>
-              ))}
-            </select>
-
-            {hasFilt && (
-              <button onClick={() => { setSearch(''); setStFilter('all'); setPrFilter('all') }}
-                style={{ height:'32px', padding:'0 10px', borderRadius:'8px', background:'rgba(239,68,68,.08)', border:'1px solid rgba(239,68,68,.14)', color:'#f87171', fontSize:'11px', cursor:'pointer', fontFamily:'inherit', display:'flex', alignItems:'center', gap:'3px' }}>
-                <X size={11} />Clear
-              </button>
-            )}
-          </div>
-
-          {/* rows */}
-          {filtered.length === 0 ? (
-            <div style={{ padding:'50px 20px', textAlign:'center' }}>
-              <AlertTriangle size={28} color="rgba(255,255,255,.1)" style={{ margin:'0 auto 8px' }} />
-              <p style={{ color:'rgba(255,255,255,.2)', fontSize:'13px' }}>
-                {hasFilt ? 'No issues match your filters' : 'No issues yet'}
-              </p>
-            </div>
-          ) : filtered.map(issue => {
-            const p = PC[issue.priority] ?? { c:'#9ca3af', bg:'rgba(156,163,175,.1)' }
-            const s = SC[issue.status]   ?? { c:'#9ca3af', bg:'rgba(156,163,175,.1)' }
-            return (
-              <div key={issue.id} className="row" onClick={() => router.push(`/admin/issues/${issue.id}`)}>
-                <div style={{ flex:1, minWidth:0 }}>
-                  <div style={{ display:'flex', alignItems:'center', gap:'7px', marginBottom:'4px', flexWrap:'wrap' }}>
-                    <span style={{ fontSize:'14px', fontFamily:"'Syne',sans-serif", fontWeight:'800', color:'#fff' }}>{issue.vehicle_no}</span>
-                    <span className="tag" style={{ color:s.c, background:s.bg }}>{issue.status}</span>
-                    <span className="tag" style={{ color:p.c, background:p.bg }}>{issue.priority}</span>
-                  </div>
-                  <p style={{ fontSize:'12px', fontWeight:'600', color:'rgba(255,255,255,.5)', marginBottom:'4px' }}>{issue.client}</p>
-                  <div style={{ display:'flex', gap:'10px', flexWrap:'wrap' }}>
-                    {issue.city && <span style={{ fontSize:'11px', color:'rgba(255,255,255,.22)', display:'flex', alignItems:'center', gap:'3px' }}><MapPin size={9} />{issue.city}{issue.location?` · ${issue.location}`:''}</span>}
-                    {issue.poc_name && <span style={{ fontSize:'11px', color:'rgba(255,255,255,.22)', display:'flex', alignItems:'center', gap:'3px' }}><Phone size={9} />{issue.poc_name}{issue.poc_number?` · ${issue.poc_number}`:''}</span>}
-                  </div>
-                </div>
-                <div style={{ display:'flex', alignItems:'center', gap:'6px', flexShrink:0 }}>
-                  {!issue.assigned_to ? (
-                    <select onClick={e => e.stopPropagation()}
-                      onChange={e => { if(e.target.value) assign(issue.id, e.target.value) }}
-                      style={{ height:'28px', background:'rgba(251,146,60,.08)', border:'1px solid rgba(251,146,60,.2)', borderRadius:'7px', color:'#fb923c', fontSize:'11px', padding:'0 6px', cursor:'pointer', outline:'none' }}>
-                      <option value="" style={{ background:'#0b0b17' }}>Assign…</option>
-                      {technicians.filter(t => t.role==='technician').map(t => (
-                        <option key={t.id} value={t.id} style={{ background:'#0b0b17' }}>{t.name}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <span style={{ fontSize:'11px', color:'#22d3ee', fontWeight:'600' }}>👷 {(issue as any).technicians?.name}</span>
+              <div className="flex flex-col sm:flex-row gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                  <Input placeholder="Search vehicle, client, city, POC..."
+                    value={searchTerm} onChange={e => setSearchTerm(e.target.value)} className="pl-9" />
+                  {searchTerm && (
+                    <button onClick={() => setSearchTerm('')} className="absolute right-3 top-1/2 -translate-y-1/2">
+                      <X className="h-4 w-4 text-muted-foreground" />
+                    </button>
                   )}
-                  <button onClick={e => { e.stopPropagation(); router.push(`/admin/issues/${issue.id}`) }}
-                    style={{ width:'28px', height:'28px', borderRadius:'7px', background:'rgba(255,255,255,.04)', border:'1px solid rgba(255,255,255,.06)', color:'rgba(255,255,255,.35)', cursor:'pointer', display:'flex', alignItems:'center', justifyContent:'center' }}>
-                    <Eye size={12} />
-                  </button>
                 </div>
+                <select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}
+                  className="h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
+                  <option value="all">All Status</option>
+                  <option value="pending">Pending</option>
+                  <option value="assigned">Assigned</option>
+                  <option value="in-progress">In Progress</option>
+                  <option value="completed">Completed</option>
+                  <option value="cancelled">Cancelled</option>
+                </select>
+                <select value={priorityFilter} onChange={e => setPriorityFilter(e.target.value)}
+                  className="h-10 px-3 border border-white/10 rounded-lg text-white text-sm" style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
+                  <option value="all">All Priority</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="high">High</option>
+                  <option value="urgent">Urgent</option>
+                </select>
+                {hasFilters && (
+                  <Button variant="ghost" size="sm" onClick={clearFilters}>
+                    <X className="h-4 w-4 mr-1" />Clear
+                  </Button>
+                )}
               </div>
-            )
-          })}
-        </div>
-      </div>
-    </AppShell>
+            </div>
+          </CardHeader>
+
+          <CardContent>
+            <div className="space-y-3">
+              {filteredIssues.length === 0 ? (
+                <div className="text-center py-12">
+                  <AlertTriangle className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                  <p className="text-muted-foreground font-medium">
+                    {hasFilters ? 'No issues match your filters' : 'No issues yet. Create or import to get started.'}
+                  </p>
+                  {hasFilters && (
+                    <Button variant="outline" size="sm" className="mt-3" onClick={clearFilters}>Clear Filters</Button>
+                  )}
+                </div>
+              ) : (
+                filteredIssues.map(issue => (
+                  <div key={issue.id}
+                    className="flex items-start justify-between p-4 border rounded-lg hover:bg-accent/50 transition-colors">
+                    <div className="flex-1 cursor-pointer" onClick={() => router.push(`/admin/issues/${issue.id}`)}>
+                      <div className="flex items-center gap-2 mb-2 flex-wrap">
+                        <h3 className="font-semibold text-base">{issue.vehicle_no}</h3>
+                        <span className={`text-xs px-2 py-0.5 rounded-full text-white ${getStatusColor(issue.status)}`}>{issue.status}</span>
+                        <span className={`text-xs px-2 py-0.5 rounded-full text-white ${getPriorityColor(issue.priority)}`}>{issue.priority}</span>
+                      </div>
+                      <p className="text-sm font-medium">{issue.client}</p>
+                      {issue.poc_name && (
+                        <p className="text-xs text-muted-foreground">POC: {issue.poc_name}{issue.poc_number && ` • ${issue.poc_number}`}</p>
+                      )}
+                      {issue.city && (
+                        <p className="text-xs text-muted-foreground flex items-center gap-1 mt-0.5">
+                          <MapPin className="h-3 w-3" />{issue.city}{issue.location && ` - ${issue.location}`}
+                        </p>
+                      )}
+                      <p className="text-xs text-muted-foreground mt-1 line-clamp-1">{issue.issue}</p>
+                      <div className="flex items-center gap-3 mt-2">
+                        {issue.assigned_to
+                          ? <span className="text-xs text-green-600 font-medium">✓ {(issue as any).technicians?.name}</span>
+                          : <span className="text-xs text-orange-500 font-medium">⚠ Unassigned</span>}
+                        <span className="text-xs text-muted-foreground">{formatDateTime(issue.created_at)}</span>
+                      </div>
+                    </div>
+
+                    <div className="flex flex-col gap-2 ml-3 min-w-[130px]">
+                      {!issue.assigned_to && (
+                        <select
+                          className="h-8 px-2 border rounded-md text-xs bg-background w-full"
+                          onChange={e => { if (e.target.value) handleAssign(issue.id, e.target.value) }}
+                          onClick={e => e.stopPropagation()}>
+                          <option value="">Assign to...</option>
+                          {technicians.filter(t => t.role === 'technician').map(tech => (
+                            <option key={tech.id} value={tech.id}>{tech.name}</option>
+                          ))}
+                        </select>
+                      )}
+                      <Button variant="outline" size="sm" onClick={() => router.push(`/admin/issues/${issue.id}`)}>
+                        <Eye className="h-3 w-3 mr-1" />View
+                      </Button>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </CardContent>
+        </Card>
+      </main>
+    </div>
   )
 }
