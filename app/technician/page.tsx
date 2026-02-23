@@ -3,7 +3,6 @@
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { AppShell } from '@/components/layout/AppShell'
 import {
   Navigation, Camera, PlayCircle, CheckCircle,
   MapPin, Phone, AlertCircle, RefreshCw, Locate,
