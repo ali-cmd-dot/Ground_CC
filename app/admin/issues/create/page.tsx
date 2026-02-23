@@ -1,243 +1,357 @@
 'use client'
 
-import { useEffect, useState } from 'react'
-import { useRouter, useParams } from 'next/navigation'
+import { useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { AppShell } from '@/components/layout/AppShell'
-import { GPSCamera } from '@/components/camera/GPSCamera'
-import { ArrowLeft, MapPin, Phone, PlayCircle, CheckCircle, Navigation, Camera, Clock } from 'lucide-react'
-import type { Issue, IssuePhoto } from '@/lib/types'
-import { formatDateTime } from '@/lib/utils'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { ArrowLeft, Save, MapPin, Zap, Users, Link, CheckCircle, AlertTriangle } from 'lucide-react'
+import type { Technician } from '@/lib/types'
 
-const PC: Record<string,{c:string;bg:string}> = {
-  urgent:{ c:'#f87171',bg:'rgba(248,113,113,.12)' }, high:{c:'#fb923c',bg:'rgba(251,146,60,.12)'},
-  medium:{ c:'#fbbf24',bg:'rgba(251,191,36,.12)'  }, low: {c:'#4ade80',bg:'rgba(74,222,128,.12)'},
-}
-const SC: Record<string,{c:string;bg:string}> = {
-  assigned:{c:'#22d3ee',bg:'rgba(34,211,238,.1)'}, 'in-progress':{c:'#a78bfa',bg:'rgba(167,139,250,.12)'},
-  completed:{c:'#4ade80',bg:'rgba(74,222,128,.12)'}, cancelled:{c:'#6b7280',bg:'rgba(107,114,128,.1)'},
+interface TechWithDistance extends Technician {
+  distance?: number
+  lastLocation?: { lat: number; lng: number }
 }
 
-const S = `
-@keyframes fu{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-@keyframes spin{to{transform:rotate(360deg)}}
-*,*::before,*::after{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:rgba(255,255,255,.08);border-radius:99px}
-.act{width:100%;height:44px;border-radius:12px;border:none;font-size:13px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:'Outfit',system-ui,sans-serif;transition:all .15s}
-.act:active{transform:scale(.98)}
-.ibox{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:11px;padding:13px}
-.sec{background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.055);border-radius:16px;padding:18px}
-`
+export default function CreateIssuePage() {
+  const router = useRouter()
+  const [loading, setLoading] = useState(false)
+  const [technicians, setTechnicians] = useState<TechWithDistance[]>([])
+  const [autoAssigning, setAutoAssigning] = useState(false)
+  const [nearestTech, setNearestTech] = useState<TechWithDistance | null>(null)
+  const [mapsLink, setMapsLink] = useState('')
+  const [linkError, setLinkError] = useState('')
+  const [linkSuccess, setLinkSuccess] = useState(false)
+  const [duplicateWarning, setDuplicateWarning] = useState('')
+  const [checkingDuplicate, setCheckingDuplicate] = useState(false)
 
-export default function TechnicianIssueDetail() {
-  const router   = useRouter()
-  const params   = useParams()
-  const issueId  = params.id as string
-  const [issue,      setIssue]      = useState<Issue|null>(null)
-  const [photos,     setPhotos]     = useState<IssuePhoto[]>([])
-  const [loading,    setLoading]    = useState(true)
-  const [updating,   setUpdating]   = useState(false)
-  const [showCam,    setShowCam]    = useState(false)
-  const [techName,   setTechName]   = useState('')
-  const [techId,     setTechId]     = useState('')
+  const [formData, setFormData] = useState({
+    vehicle_no: '', client: '', poc_name: '', poc_number: '',
+    issue: '', city: '', location: '', latitude: 0, longitude: 0,
+    availability: '', priority: 'medium', assigned_to: '',
+    availability_date: ''
+  })
 
-  useEffect(() => { init() }, [issueId])
+  useEffect(() => { fetchTechnicians() }, [])
 
-  const init = async () => {
-    const { data:{ session } } = await supabase.auth.getSession()
-    if (!session) { router.push('/login'); return }
-    setTechId(session.user.id)
-    const { data:t } = await supabase.from('technicians').select('*').eq('id',session.user.id).single()
-    if (t) setTechName(t.name)
-    const { data, error } = await supabase.from('issues').select('*').eq('id',issueId).single()
-    if (error) { router.back(); return }
-    setIssue(data); setLoading(false)
-    const { data:ph } = await supabase.from('issue_photos').select('*').eq('issue_id',issueId).order('taken_at',{ascending:false})
-    if (ph) setPhotos(ph)
+  useEffect(() => {
+    if (formData.latitude && formData.longitude) {
+      findNearestTechnician(formData.latitude, formData.longitude)
+    }
+  }, [formData.latitude, formData.longitude])
+
+  const fetchTechnicians = async () => {
+    const { data } = await supabase.from('technicians').select('*')
+      .eq('role', 'technician').eq('is_active', true)
+    if (data) setTechnicians(data)
   }
 
-  const updateStatus = async (st: string) => {
-    setUpdating(true)
-    const u: any = { status:st }
-    if (st==='in-progress' && !issue?.started_at)  u.started_at  = new Date().toISOString()
-    if (st==='completed'   && !issue?.completed_at) u.completed_at = new Date().toISOString()
-    await supabase.from('issues').update(u).eq('id',issueId)
-    const { data } = await supabase.from('issues').select('*').eq('id',issueId).single()
-    if (data) setIssue(data)
-    setUpdating(false)
+  const extractCoordsFromLink = (url: string): { lat: number; lng: number } | null => {
+    try {
+      const patterns = [
+        /query=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+        /@(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+        /place\/(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+        /ll=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+        /destination=(-?\d+\.?\d*),(-?\d+\.?\d*)/,
+        /!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/,
+      ]
+      for (const pattern of patterns) {
+        const match = url.match(pattern)
+        if (match) return { lat: parseFloat(match[1]), lng: parseFloat(match[2]) }
+      }
+      return null
+    } catch { return null }
   }
 
-  const openNav = () => {
-    if (!issue) return
-    const url = (issue.latitude&&issue.longitude)
-      ? `https://www.google.com/maps/dir/?api=1&destination=${issue.latitude},${issue.longitude}&travelmode=driving`
-      : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(`${issue.location||''} ${issue.city||''}`)}`
-    window.open(url,'_blank')
+  const handleLinkExtract = () => {
+    setLinkError(''); setLinkSuccess(false)
+    if (!mapsLink.trim()) { setLinkError('Please enter a link first'); return }
+    const coords = extractCoordsFromLink(mapsLink)
+    if (!coords) {
+      setLinkError('Invalid Google Maps link. Supported formats: maps.google.com/?q=lat,lng or any share link')
+      return
+    }
+    setFormData(prev => ({ ...prev, latitude: coords.lat, longitude: coords.lng }))
+    setLinkSuccess(true)
   }
 
-  const logout = async () => { await supabase.auth.signOut(); router.push('/login') }
+  const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
+    const R = 6371
+    const dLat = (lat2 - lat1) * Math.PI / 180
+    const dLon = (lon2 - lon1) * Math.PI / 180
+    const a = Math.sin(dLat / 2) ** 2 +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLon / 2) ** 2
+    return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
+  }
 
-  if (loading || !issue) return (
-    <div style={{ height:'100dvh', display:'flex', alignItems:'center', justifyContent:'center', background:'#07070f' }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-      <div style={{ width:'34px', height:'34px', border:'2px solid #22d3ee', borderTopColor:'transparent', borderRadius:'50%', animation:'spin 1s linear infinite' }} />
-    </div>
-  )
+  const findNearestTechnician = async (issueLat: number, issueLng: number) => {
+    setAutoAssigning(true)
+    try {
+      const today = new Date().toISOString().split('T')[0]
+      const { data: attendance } = await supabase
+        .from('attendance').select('technician_id, latitude, longitude')
+        .eq('date', today).is('check_out', null)
+      if (!attendance || attendance.length === 0) { setNearestTech(null); return }
+      const withDistances: TechWithDistance[] = []
+      for (const att of attendance) {
+        if (!att.latitude || !att.longitude) continue
+        const tech = technicians.find(t => t.id === att.technician_id)
+        if (!tech) continue
+        withDistances.push({
+          ...tech,
+          distance: calculateDistance(issueLat, issueLng, att.latitude, att.longitude),
+          lastLocation: { lat: att.latitude, lng: att.longitude }
+        })
+      }
+      withDistances.sort((a, b) => (a.distance || 999) - (b.distance || 999))
+      setNearestTech(withDistances[0] || null)
+    } finally { setAutoAssigning(false) }
+  }
 
-  const p = PC[issue.priority] ?? { c:'#9ca3af',bg:'rgba(156,163,175,.1)' }
-  const s = SC[issue.status]   ?? { c:'#9ca3af',bg:'rgba(156,163,175,.1)' }
+  const checkDuplicate = async (vehicleNo: string) => {
+    if (!vehicleNo || vehicleNo.length < 4) { setDuplicateWarning(''); return }
+    setCheckingDuplicate(true)
+    const { data } = await supabase.from('issues').select('id, status')
+      .eq('vehicle_no', vehicleNo.toUpperCase())
+      .not('status', 'in', '("completed","cancelled")')
+    setCheckingDuplicate(false)
+    if (data && data.length > 0) {
+      setDuplicateWarning(`${vehicleNo.toUpperCase()} already has an open issue (Status: ${data[0].status}). A new issue can only be added after this one is closed.`)
+    } else {
+      setDuplicateWarning('')
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (duplicateWarning && !confirm('Is vehicle ka issue already open hai. Phir bhi add karna hai?')) return
+    setLoading(true)
+    try {
+      const { error } = await supabase.from('issues').insert({
+        ...formData,
+        vehicle_no: formData.vehicle_no.toUpperCase(),
+        assigned_to: formData.assigned_to || null,
+        latitude: formData.latitude || null,
+        longitude: formData.longitude || null,
+        availability_date: formData.availability_date || null,
+        status: formData.assigned_to ? 'assigned' : 'pending'
+      })
+      if (error) throw error
+      const tech = technicians.find(t => t.id === formData.assigned_to)
+      if (tech) {
+        await fetch('/api/telegram', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message: `🔧 <b>Issue Assigned</b>\n\n👷 ${tech.name}\n🚗 ${formData.vehicle_no.toUpperCase()}\n👤 ${formData.client}\n📍 ${formData.city}` })
+        }).catch(() => {})
+      }
+      alert('Issue created successfully!')
+      router.push('/admin')
+    } catch (err: any) {
+      alert('Error: ' + err.message)
+    } finally { setLoading(false) }
+  }
+
+  const inputClass = "mt-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600 focus:border-blue-500/50 focus:ring-blue-500/20"
+  const labelClass = "text-gray-400 text-sm font-medium"
+  const sectionClass = "bg-[#0d0d16] border border-white/8 rounded-2xl p-6"
 
   return (
-    <AppShell role="technician" userName={techName} onLogout={logout}>
-      <style>{S}</style>
-
-      <div style={{ flex:1, overflowY:'auto', padding:'24px', minWidth:0 }}>
-        {/* breadcrumb */}
-        <div style={{ display:'flex', alignItems:'center', gap:'7px', marginBottom:'20px', animation:'fu .3s ease' }}>
-          <button onClick={() => router.back()} style={{ display:'flex', alignItems:'center', gap:'5px', background:'none', border:'none', cursor:'pointer', color:'rgba(255,255,255,.3)', fontSize:'12px', fontFamily:'inherit', padding:0 }}>
-            <ArrowLeft size={13} />Back
-          </button>
-          <span style={{ color:'rgba(255,255,255,.12)' }}>·</span>
-          <span style={{ fontSize:'12px', color:'rgba(255,255,255,.4)', fontFamily:"'Syne',sans-serif", fontWeight:'700' }}>{issue.vehicle_no}</span>
+    <div className="min-h-screen bg-[#080810]">
+      <header className="bg-[#0a0a12] border-b border-white/8 sticky top-0 z-10 backdrop-blur">
+        <div className="max-w-3xl mx-auto px-4 py-4 flex items-center gap-3">
+          <Button variant="ghost" onClick={() => router.back()} className="text-gray-400 hover:text-white h-9 px-3">
+            <ArrowLeft className="h-4 w-4 mr-2" />Back
+          </Button>
+          <h1 className="text-lg font-bold text-white">Create New Issue</h1>
         </div>
+      </header>
 
-        {/* Mobile: single column | Desktop: 2-col */}
-        <div style={{ display:'grid', gridTemplateColumns:'1fr min(320px,38%)', gap:'16px', alignItems:'start' }}>
+      <main className="max-w-3xl mx-auto px-4 py-8">
+        <form onSubmit={handleSubmit} className="space-y-5">
 
-          {/* ── Left ── */}
-          <div style={{ display:'flex', flexDirection:'column', gap:'14px' }}>
+          {/* Vehicle */}
+          <div className={sectionClass}>
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">🚗 Vehicle</h3>
+            <div>
+              <Label className={labelClass}>Vehicle Number *</Label>
+              <Input value={formData.vehicle_no}
+                onChange={e => { const v = e.target.value.toUpperCase(); setFormData({ ...formData, vehicle_no: v }); checkDuplicate(v) }}
+                placeholder="MH01AB1234" required className={inputClass + " uppercase font-mono text-lg tracking-widest"} />
+              {checkingDuplicate && <p className="text-xs text-gray-500 mt-1.5 flex items-center gap-1"><span className="animate-spin inline-block">⟳</span> Checking...</p>}
+              {duplicateWarning && (
+                <div className="mt-2 flex items-start gap-2 bg-orange-500/10 border border-orange-500/25 rounded-xl px-4 py-3">
+                  <AlertTriangle className="h-4 w-4 text-orange-400 mt-0.5 flex-shrink-0" />
+                  <p className="text-sm text-orange-300">{duplicateWarning}</p>
+                </div>
+              )}
+            </div>
+          </div>
 
-            {/* hero */}
-            <div className="sec" style={{ animation:'fu .4s ease' }}>
-              <div style={{ display:'flex', alignItems:'flex-start', justifyContent:'space-between', marginBottom:'16px' }}>
+          {/* Client */}
+          <div className={sectionClass}>
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">👤 Client Details</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label className={labelClass}>Client Name *</Label>
+                <Input value={formData.client} onChange={e => setFormData({ ...formData, client: e.target.value })}
+                  placeholder="Baba Travels" required className={inputClass} />
+              </div>
+              <div>
+                <Label className={labelClass}>Availability Date</Label>
+                <Input type="date" value={formData.availability_date}
+                  onChange={e => setFormData({ ...formData, availability_date: e.target.value })}
+                  className={inputClass + " "} />
+              </div>
+              <div>
+                <Label className={labelClass}>POC Name</Label>
+                <Input value={formData.poc_name} onChange={e => setFormData({ ...formData, poc_name: e.target.value })}
+                  placeholder="RAVI" className={inputClass} />
+              </div>
+              <div>
+                <Label className={labelClass}>POC Number</Label>
+                <Input value={formData.poc_number} onChange={e => setFormData({ ...formData, poc_number: e.target.value })}
+                  placeholder="9876543210" className={inputClass} />
+              </div>
+            </div>
+          </div>
+
+          {/* Issue */}
+          <div className={sectionClass}>
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">🔧 Issue Details</h3>
+            <div className="space-y-4">
+              <div>
+                <Label className={labelClass}>Issue Description *</Label>
+                <textarea value={formData.issue} onChange={e => setFormData({ ...formData, issue: e.target.value })}
+                  placeholder="Device offline, GPS not tracking..." required
+                  rows={3}
+                  className="w-full mt-1 px-3 py-2 bg-white/5 border border-white/10 rounded-lg text-white placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 resize-none text-sm" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <p style={{ fontSize:'10px', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'5px' }}>Issue Detail</p>
-                  <h1 style={{ fontFamily:"'Syne',sans-serif", fontSize:'26px', fontWeight:'800', color:'#fff', lineHeight:1.1, letterSpacing:'-0.3px' }}>{issue.vehicle_no}</h1>
+                  <Label className={labelClass}>Priority *</Label>
+                  <select value={formData.priority} onChange={e => setFormData({ ...formData, priority: e.target.value })}
+                    className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm"
+                    style={{ background: '#1a1a2e', colorScheme: 'dark' }} required>
+                    <option value="low" style={{ background: '#1a1a2e' }}>Low</option>
+                    <option value="medium" style={{ background: '#1a1a2e' }}>Medium</option>
+                    <option value="high" style={{ background: '#1a1a2e' }}>High</option>
+                    <option value="urgent" style={{ background: '#1a1a2e' }}>Urgent</option>
+                  </select>
                 </div>
-                <div style={{ display:'flex', gap:'5px' }}>
-                  <span style={{ fontSize:'11px', fontWeight:'700', padding:'3px 9px', borderRadius:'7px', color:s.c, background:s.bg }}>{issue.status}</span>
-                  <span style={{ fontSize:'11px', fontWeight:'700', padding:'3px 9px', borderRadius:'7px', color:p.c, background:p.bg }}>{issue.priority}</span>
+                <div>
+                  <Label className={labelClass}>Availability Hours</Label>
+                  <Input value={formData.availability} onChange={e => setFormData({ ...formData, availability: e.target.value })}
+                    placeholder="9am to 7pm" className={inputClass} />
                 </div>
               </div>
+            </div>
+          </div>
 
-              <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:'9px', marginBottom:'10px' }}>
-                {[
-                  { lbl:'VEHICLE',  val:issue.vehicle_no   },
-                  { lbl:'CLIENT',   val:issue.client        },
-                  { lbl:'POC',      val:issue.poc_name||'—' },
-                  { lbl:'CONTACT',  val:issue.poc_number||'—' },
-                ].map(x => (
-                  <div key={x.lbl} className="ibox">
-                    <p style={{ fontSize:'9px', color:'rgba(255,255,255,.22)', letterSpacing:'1.2px', marginBottom:'5px' }}>{x.lbl}</p>
-                    <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff' }}>{x.val}</p>
-                  </div>
-                ))}
+          {/* Location */}
+          <div className={sectionClass}>
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">📍 Location</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+              <div>
+                <Label className={labelClass}>City</Label>
+                <Input value={formData.city} onChange={e => setFormData({ ...formData, city: e.target.value })}
+                  placeholder="Pune" className={inputClass} />
               </div>
-
-              <div className="ibox">
-                <p style={{ fontSize:'9px', color:'rgba(255,255,255,.22)', letterSpacing:'1.2px', marginBottom:'5px' }}>ISSUE</p>
-                <p style={{ fontSize:'13px', color:'rgba(255,255,255,.65)', lineHeight:1.6 }}>{issue.issue}</p>
+              <div>
+                <Label className={labelClass}>Location / Area</Label>
+                <Input value={formData.location} onChange={e => setFormData({ ...formData, location: e.target.value })}
+                  placeholder="Sangamwadi" className={inputClass} />
               </div>
+            </div>
 
-              {(issue.city||issue.location) && (
-                <div className="ibox" style={{ marginTop:'9px', display:'flex', alignItems:'center', gap:'7px' }}>
-                  <MapPin size={13} color="#22d3ee" />
-                  <span style={{ fontSize:'12px', color:'rgba(255,255,255,.5)' }}>{issue.city}{issue.location?` · ${issue.location}`:''}</span>
-                </div>
-              )}
-
-              {issue.availability && (
-                <div className="ibox" style={{ marginTop:'9px', display:'flex', alignItems:'center', gap:'7px' }}>
-                  <Clock size={13} color="#fbbf24" />
-                  <span style={{ fontSize:'12px', color:'rgba(255,255,255,.5)' }}>Available: {issue.availability}</span>
+            {/* Google Maps Link */}
+            <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4">
+              <p className="text-sm font-semibold text-blue-300 mb-1 flex items-center gap-2">
+                <Link className="h-4 w-4" />GPS from Google Maps Link
+              </p>
+              <p className="text-xs text-gray-500 mb-3">
+                Google Maps → Open location → Share → Copy Link → Paste here
+              </p>
+              <div className="flex gap-2">
+                <Input value={mapsLink}
+                  onChange={e => { setMapsLink(e.target.value); setLinkSuccess(false); setLinkError('') }}
+                  placeholder="https://maps.google.com/..."
+                  className="flex-1 bg-white/5 border-white/10 text-white placeholder:text-gray-600 text-xs" />
+                <Button type="button" onClick={handleLinkExtract}
+                  className="bg-blue-600 hover:bg-blue-700 text-white shrink-0">
+                  <MapPin className="h-4 w-4 mr-1.5" />Extract
+                </Button>
+              </div>
+              {linkError && <p className="text-xs text-red-400 mt-2 flex items-center gap-1">⚠ {linkError}</p>}
+              {(linkSuccess || formData.latitude !== 0) && (
+                <div className="flex items-center gap-2 mt-2">
+                  <CheckCircle className="h-4 w-4 text-green-400" />
+                  <p className="text-sm text-green-400 font-mono">
+                    {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                  </p>
                 </div>
               )}
             </div>
+          </div>
 
-            {/* photos */}
-            <div className="sec" style={{ animation:'fu .4s ease .1s both' }}>
-              <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:'14px' }}>
-                <p style={{ fontSize:'13px', fontWeight:'700', color:'#fff' }}>
-                  Photos <span style={{ fontSize:'11px', color:'rgba(255,255,255,.28)', fontWeight:'500' }}>{photos.length}</span>
-                </p>
-                <button onClick={() => setShowCam(!showCam)}
-                  style={{ height:'30px', padding:'0 10px', borderRadius:'8px', background:'rgba(34,211,238,.08)', border:'1px solid rgba(34,211,238,.18)', color:'#22d3ee', fontSize:'11px', fontWeight:'600', cursor:'pointer', display:'flex', alignItems:'center', gap:'4px', fontFamily:'inherit' }}>
-                  <Camera size={11} />{showCam?'Close':'Take Photo'}
-                </button>
-              </div>
-              {showCam && (
-                <div style={{ marginBottom:'14px' }}>
-                  <GPSCamera issueId={issueId} onPhotoUploaded={async () => {
-                    const { data:ph } = await supabase.from('issue_photos').select('*').eq('issue_id',issueId).order('taken_at',{ascending:false})
-                    if (ph) setPhotos(ph); setShowCam(false)
-                  }} />
-                </div>
-              )}
-              {photos.length === 0 ? (
-                <p style={{ textAlign:'center', color:'rgba(255,255,255,.18)', fontSize:'12px', padding:'20px 0' }}>No photos yet</p>
-              ) : (
-                <div style={{ display:'grid', gridTemplateColumns:'repeat(3,1fr)', gap:'7px' }}>
-                  {photos.map(ph => (
-                    <div key={ph.id} style={{ aspectRatio:'1', borderRadius:'9px', overflow:'hidden', position:'relative', border:'1px solid rgba(255,255,255,.06)' }}>
-                      <img src={ph.photo_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} />
-                      <div style={{ position:'absolute', bottom:0, left:0, right:0, background:'linear-gradient(to top,rgba(0,0,0,.7),transparent)', padding:'6px 5px 3px', fontSize:'9px', color:'rgba(255,255,255,.7)', textTransform:'capitalize', fontWeight:'700' }}>{ph.photo_type}</div>
+          {/* Assignment */}
+          <div className={sectionClass}>
+            <h3 className="text-xs font-bold text-blue-400 uppercase tracking-widest mb-4">👷 Assignment</h3>
+            {nearestTech && (
+              <div className="mb-4 bg-green-500/8 border border-green-500/20 rounded-xl p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="flex items-center gap-3">
+                    <div className="h-9 w-9 rounded-full bg-green-500/20 flex items-center justify-center">
+                      <Zap className="h-4 w-4 text-green-400" />
                     </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* ── Right: actions ── */}
-          <div style={{ display:'flex', flexDirection:'column', gap:'10px', animation:'fu .4s ease .08s both' }}>
-            <div className="sec">
-              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'12px' }}>Actions</p>
-              <div style={{ display:'flex', flexDirection:'column', gap:'8px' }}>
-                <button className="act" onClick={openNav}
-                  style={{ background:'linear-gradient(135deg,rgba(34,211,238,.12),rgba(14,165,233,.08))', border:'1px solid rgba(34,211,238,.22)', color:'#22d3ee' }}>
-                  <Navigation size={16} />Navigate
-                </button>
-                {issue.status==='assigned' && (
-                  <button className="act" onClick={() => updateStatus('in-progress')} disabled={updating}
-                    style={{ background:'rgba(167,139,250,.1)', border:'1px solid rgba(167,139,250,.22)', color:'#a78bfa' }}>
-                    <PlayCircle size={16} />Start Work
-                  </button>
-                )}
-                {issue.status==='in-progress' && (
-                  <button className="act" onClick={() => updateStatus('completed')} disabled={updating}
-                    style={{ background:'linear-gradient(135deg,rgba(74,222,128,.12),rgba(16,185,129,.08))', border:'1px solid rgba(74,222,128,.25)', color:'#4ade80' }}>
-                    <CheckCircle size={16} />Mark Completed
-                  </button>
-                )}
-                {issue.poc_number && (
-                  <button className="act" onClick={() => window.open(`tel:${issue.poc_number}`,'_self')}
-                    style={{ background:'rgba(251,191,36,.07)', border:'1px solid rgba(251,191,36,.18)', color:'#fbbf24' }}>
-                    <Phone size={16} />Call POC
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* timeline */}
-            <div className="sec">
-              <p style={{ fontSize:'10px', fontWeight:'600', color:'rgba(255,255,255,.22)', textTransform:'uppercase', letterSpacing:'1.5px', marginBottom:'12px' }}>Timeline</p>
-              {[
-                { lbl:'Created',   val:formatDateTime(issue.created_at), c:'#22d3ee'  },
-                issue.started_at  ?{ lbl:'Started',   val:formatDateTime(issue.started_at!),   c:'#a78bfa' }:null,
-                issue.completed_at?{ lbl:'Completed', val:formatDateTime(issue.completed_at!),  c:'#4ade80' }:null,
-              ].filter(Boolean).map(t => (
-                <div key={t!.lbl} style={{ display:'flex', alignItems:'flex-start', gap:'8px', marginBottom:'10px' }}>
-                  <div style={{ width:'6px', height:'6px', borderRadius:'50%', background:t!.c, marginTop:'4px', flexShrink:0, boxShadow:`0 0 6px ${t!.c}80` }} />
-                  <div>
-                    <p style={{ fontSize:'10px', color:'rgba(255,255,255,.25)' }}>{t!.lbl}</p>
-                    <p style={{ fontSize:'11px', color:'rgba(255,255,255,.55)', fontWeight:'600' }}>{t!.val}</p>
+                    <div>
+                      <p className="font-semibold text-white text-sm">{nearestTech.name} — Nearest Available</p>
+                      <p className="text-xs text-green-300">
+                        {nearestTech.distance !== undefined
+                          ? nearestTech.distance < 1 ? `${(nearestTech.distance * 1000).toFixed(0)}m away` : `${nearestTech.distance.toFixed(1)}km away`
+                          : ''} • Checked in today
+                      </p>
+                    </div>
                   </div>
+                  <Button type="button" size="sm"
+                    onClick={() => setFormData(prev => ({ ...prev, assigned_to: nearestTech.id }))}
+                    className="bg-green-600 hover:bg-green-700 shrink-0">Auto Assign</Button>
                 </div>
+              </div>
+            )}
+            {autoAssigning && <p className="text-sm text-gray-400 mb-4 flex items-center gap-2"><span className="animate-spin">⟳</span> Finding nearest technician...</p>}
+            {formData.latitude !== 0 && !nearestTech && !autoAssigning && (
+              <p className="text-sm text-yellow-400 mb-4 flex items-center gap-2"><Users className="h-4 w-4" />No active technicians nearby</p>
+            )}
+            <Label className={labelClass}>Assign to Technician</Label>
+            <select value={formData.assigned_to}
+              onChange={e => setFormData({ ...formData, assigned_to: e.target.value })}
+              className="w-full mt-1 h-10 px-3 border border-white/10 rounded-lg text-white text-sm"
+              style={{ background: '#1a1a2e', colorScheme: 'dark' }}>
+              <option value="" style={{ background: '#1a1a2e' }}>-- Leave Unassigned --</option>
+              {technicians.map(tech => (
+                <option key={tech.id} value={tech.id} style={{ background: '#1a1a2e' }}>
+                  {tech.name}{(tech as any).cities ? ` — ${(tech as any).cities}` : ''}
+                  {nearestTech?.id === tech.id ? ' ★ Nearest' : ''}
+                </option>
               ))}
-            </div>
+            </select>
           </div>
-        </div>
-      </div>
-    </AppShell>
+
+          <div className="flex gap-3 pt-2">
+            <Button type="submit" disabled={loading}
+              className="flex-1 h-12 bg-blue-600 hover:bg-blue-700 text-white font-bold text-base rounded-xl">
+              <Save className="h-5 w-5 mr-2" />{loading ? 'Creating...' : 'Create Issue'}
+            </Button>
+            <Button type="button" variant="outline" onClick={() => router.back()}
+              className="h-12 px-6 border-white/10 text-gray-300 hover:text-white hover:bg-white/5 rounded-xl">
+              Cancel
+            </Button>
+          </div>
+        </form>
+      </main>
+    </div>
   )
 }
