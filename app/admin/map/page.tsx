@@ -66,6 +66,7 @@ export default function IssuesMapPage() {
   const [technicians, setTechnicians] = useState<any[]>([])
   const [liveLocations, setLiveLocations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [routeProgress, setRouteProgress] = useState<{done: number, total: number} | null>(null)
   const [activeFilter, setActiveFilter] = useState<'Priority' | 'Status' | 'Routes' | 'Techs'>('Priority')
   const [selectedIssue, setSelectedIssue] = useState<any>(null)
   const [currentUser, setCurrentUser] = useState<any>(null)
@@ -285,24 +286,58 @@ export default function IssuesMapPage() {
 
     // ── Routes: tech → their assigned issues ──────
     if (activeFilter === 'Routes') {
-      for (const issue of issues) {
-        if (!issue.assigned_to) continue
+      const assignedIssues = issues.filter(i => i.assigned_to)
+      setRouteProgress({ done: 0, total: assignedIssues.length })
+
+      let done = 0
+      for (const issue of assignedIssues) {
         const tech = technicians.find(t => t.id === issue.assigned_to)
-        if (!tech) continue
+        if (!tech) { done++; setRouteProgress({ done, total: assignedIssues.length }); continue }
 
         const liveData = liveLocations.find(l => l.technician_id === tech.id)
         let techLat: number, techLng: number
+        const isOnline = !!liveData
 
         if (liveData) {
           techLat = liveData.latitude
           techLng = liveData.longitude
         } else {
+          // Use city center for offline technician
           const cityCenter = getCityCenter(tech.cities || tech.city || '')
-          if (!cityCenter) continue
+          if (!cityCenter) {
+            done++; setRouteProgress({ done, total: assignedIssues.length }); continue
+          }
           ;[techLat, techLng] = cityCenter
         }
 
-        const isOnline = !!liveData
+        // Draw tech marker at their position (online or city center)
+        const initials = (tech.name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+        const techIcon = L.divIcon({
+          className: '',
+          html: `<div style="
+            width:32px;height:32px;border-radius:50%;
+            background:${isOnline ? '#3b82f6' : '#4b5563'};
+            border:2px solid ${isOnline ? 'white' : '#9ca3af'};
+            display:flex;align-items:center;justify-content:center;
+            font-size:11px;font-weight:bold;color:white;
+            box-shadow:0 0 8px ${isOnline ? '#3b82f688' : '#00000066'};
+          ">${initials}</div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16],
+        })
+
+        const techMarker = L.marker([techLat, techLng], { icon: techIcon })
+          .addTo(mapRef.current)
+          .bindPopup(`
+            <div style="min-width:160px;font-family:sans-serif;">
+              <b>${tech.name}</b>
+              <div style="font-size:11px;color:#9ca3af;">📍 ${tech.cities || tech.city || 'No city'}</div>
+              <div style="font-size:11px;margin-top:6px;${isOnline ? 'color:#22c55e;' : 'color:#9ca3af;'}">
+                ${isOnline ? '🟢 Online — Live GPS' : '⚫ Not logged in yet<br/><small>Showing city center</small>'}
+              </div>
+            </div>
+          `)
+        techMarkersRef.current.push(techMarker)
 
         try {
           const url = `https://router.project-osrm.org/route/v1/driving/${techLng},${techLat};${issue.longitude},${issue.latitude}?overview=full&geometries=geojson`
@@ -310,16 +345,40 @@ export default function IssuesMapPage() {
           const data = await res.json()
           if (data.routes?.[0]) {
             const coords = data.routes[0].geometry.coordinates.map(([lng, lat]: number[]) => [lat, lng])
+            const midIdx = Math.floor(coords.length / 2)
+            const distKm = (data.routes[0].distance / 1000).toFixed(0)
+            const distMins = Math.round(data.routes[0].duration / 60)
+
             const line = L.polyline(coords, {
               color: isOnline ? '#eab308' : '#6b7280',
-              weight: 2,
-              opacity: isOnline ? 0.8 : 0.4,
-              dashArray: isOnline ? undefined : '6, 6',
+              weight: isOnline ? 3 : 2,
+              opacity: isOnline ? 0.9 : 0.5,
+              dashArray: isOnline ? undefined : '8, 8',
             }).addTo(mapRef.current)
             routeLinesRef.current.push(line)
+
+            // Distance label on route
+            const label = L.marker(coords[midIdx], {
+              icon: L.divIcon({
+                className: '',
+                html: `<div style="
+                  background:${isOnline ? '#1a1a2e' : '#111'};
+                  border:1px solid ${isOnline ? '#eab308' : '#4b5563'};
+                  color:${isOnline ? '#eab308' : '#9ca3af'};
+                  padding:2px 6px;border-radius:4px;
+                  font-size:10px;white-space:nowrap;font-weight:600;
+                ">${distKm}km · ${distMins}min</div>`,
+                iconAnchor: [30, 10],
+              })
+            }).addTo(mapRef.current)
+            routeLinesRef.current.push(label)
           }
         } catch { /* ignore route errors */ }
+
+        done++
+        setRouteProgress({ done, total: assignedIssues.length })
       }
+      setRouteProgress(null)
     }
 
     // Fit map
@@ -353,6 +412,12 @@ export default function IssuesMapPage() {
           <span>📍 Issues: <b className="text-white">{issueCount}</b></span>
           <span>🟢 Online: <b className="text-green-400">{onlineTechs}</b></span>
           <span>⚫ Offline: <b className="text-gray-400">{offlineTechs}</b></span>
+          {routeProgress && (
+            <span className="text-yellow-400 flex items-center gap-1">
+              <span className="animate-spin inline-block">↻</span>
+              Loading routes... {routeProgress.done}/{routeProgress.total}
+            </span>
+          )}
         </div>
 
         {/* Filter tabs */}
