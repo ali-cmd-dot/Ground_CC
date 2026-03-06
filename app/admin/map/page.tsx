@@ -284,116 +284,178 @@ export default function IssuesMapPage() {
       }
     }
 
-    // ── Routes: tech → their assigned issues ──────
+    // ── Routes: nearest-next ordering per technician ──────
     if (activeFilter === 'Routes') {
-      const assignedIssues = issues.filter(i => i.assigned_to)
-      setRouteProgress({ done: 0, total: assignedIssues.length })
+      // Group issues by assigned technician
+      const techIssueMap = new Map<string, any[]>()
+      for (const issue of issues) {
+        if (!issue.assigned_to) continue
+        if (!techIssueMap.has(issue.assigned_to)) techIssueMap.set(issue.assigned_to, [])
+        techIssueMap.get(issue.assigned_to)!.push(issue)
+      }
 
+      const totalRoutes = issues.filter(i => i.assigned_to).length
+      setRouteProgress({ done: 0, total: totalRoutes })
       let done = 0
-      for (const issue of assignedIssues) {
-        const tech = technicians.find(t => t.id === issue.assigned_to)
-        if (!tech) { done++; setRouteProgress({ done, total: assignedIssues.length }); continue }
+
+      for (const [techId, techIssues] of techIssueMap) {
+        const tech = technicians.find(t => t.id === techId)
+        if (!tech) continue
 
         const liveData = liveLocations.find(l => l.technician_id === tech.id)
-        let techLat: number, techLng: number
         const isOnline = !!liveData
+        let startLat: number, startLng: number
 
         if (liveData) {
-          techLat = liveData.latitude
-          techLng = liveData.longitude
+          startLat = liveData.latitude
+          startLng = liveData.longitude
         } else {
-          // Use city center for offline technician
           const cityCenter = getCityCenter(tech.cities || tech.city || '')
-          if (!cityCenter) {
-            done++; setRouteProgress({ done, total: assignedIssues.length }); continue
-          }
-          ;[techLat, techLng] = cityCenter
+          if (!cityCenter) continue
+          ;[startLat, startLng] = cityCenter
         }
 
-        // Draw tech marker at their position (online or city center)
-        const initials = (tech.name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+        // ── Nearest-next greedy sort ──
+        // Start from tech position, always pick closest remaining issue
+        const calcDist = (lat1: number, lng1: number, lat2: number, lng2: number) => {
+          const R = 6371
+          const dLat = (lat2 - lat1) * Math.PI / 180
+          const dLng = (lng2 - lng1) * Math.PI / 180
+          const a = Math.sin(dLat/2)**2 +
+            Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLng/2)**2
+          return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a))
+        }
+
+        const remaining = [...techIssues]
+        const ordered: any[] = []
+        let curLat = startLat, curLng = startLng
+
+        while (remaining.length > 0) {
+          let nearestIdx = 0
+          let nearestDist = Infinity
+          for (let i = 0; i < remaining.length; i++) {
+            const d = calcDist(curLat, curLng, remaining[i].latitude, remaining[i].longitude)
+            if (d < nearestDist) { nearestDist = d; nearestIdx = i }
+          }
+          const next = remaining.splice(nearestIdx, 1)[0]
+          ordered.push(next)
+          curLat = next.latitude
+          curLng = next.longitude
+        }
+
+        // Draw tech marker
+        const initials = (tech.name || '?').split(' ').map((n: string) => n[0]).join('').slice(0,2).toUpperCase()
         const techIcon = L.divIcon({
           className: '',
           html: `<div style="
-            width:32px;height:32px;border-radius:50%;
+            width:34px;height:34px;border-radius:50%;
             background:${isOnline ? '#3b82f6' : '#4b5563'};
             border:2px solid ${isOnline ? 'white' : '#9ca3af'};
             display:flex;align-items:center;justify-content:center;
             font-size:11px;font-weight:bold;color:white;
-            box-shadow:0 0 8px ${isOnline ? '#3b82f688' : '#00000066'};
+            box-shadow:0 0 10px ${isOnline ? '#3b82f6aa' : '#00000066'};
           ">${initials}</div>`,
-          iconSize: [32, 32],
-          iconAnchor: [16, 16],
+          iconSize: [34, 34], iconAnchor: [17, 17],
         })
-
-        const techMarker = L.marker([techLat, techLng], { icon: techIcon })
+        const techMarker = L.marker([startLat, startLng], { icon: techIcon })
           .addTo(mapRef.current)
           .bindPopup(`
             <div style="min-width:160px;font-family:sans-serif;">
               <b>${tech.name}</b>
-              <div style="font-size:11px;color:#9ca3af;">📍 ${tech.cities || tech.city || 'No city'}</div>
-              <div style="font-size:11px;margin-top:6px;${isOnline ? 'color:#22c55e;' : 'color:#9ca3af;'}">
-                ${isOnline ? '🟢 Online — Live GPS' : '⚫ Not logged in yet<br/><small>Showing city center</small>'}
+              <div style="font-size:11px;color:#9ca3af;margin-top:2px;">📍 ${tech.cities || tech.city || 'No city'}</div>
+              <div style="font-size:11px;margin-top:6px;${isOnline ? 'color:#22c55e' : 'color:#9ca3af'}">
+                ${isOnline ? '🟢 Online — Live GPS' : '⚫ Not logged in<br/><small>City center shown</small>'}
               </div>
+              <div style="font-size:11px;margin-top:4px;">Issues: <b>${ordered.length}</b></div>
             </div>
           `)
         techMarkersRef.current.push(techMarker)
 
-        // Draw straight-line route first as fallback
-        const straightLine = L.polyline([[techLat, techLng], [issue.latitude, issue.longitude]], {
-          color: isOnline ? '#eab308' : '#6b7280',
-          weight: isOnline ? 2 : 1.5,
-          opacity: 0.4,
-          dashArray: '4, 8',
-        }).addTo(mapRef.current)
-        routeLinesRef.current.push(straightLine)
+        // Draw numbered markers + route segments in nearest-next order
+        let prevLat = startLat, prevLng = startLng
 
-        // Try to get actual road route
-        try {
-          const url = `https://router.project-osrm.org/route/v1/driving/${techLng},${techLat};${issue.longitude},${issue.latitude}?overview=full&geometries=geojson`
-          const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
-          const data = await res.json()
-          if (data.routes?.[0]) {
-            // Remove the straight line fallback
-            straightLine.remove()
-            const idx2 = routeLinesRef.current.indexOf(straightLine)
-            if (idx2 > -1) routeLinesRef.current.splice(idx2, 1)
+        for (let idx = 0; idx < ordered.length; idx++) {
+          const issue = ordered[idx]
+          const stopNum = idx + 1
 
-            const coords = data.routes[0].geometry.coordinates.map(([lng, lat]: number[]) => [lat, lng])
-            const midIdx = Math.floor(coords.length / 2)
-            const distKm = (data.routes[0].distance / 1000).toFixed(0)
-            const distMins = Math.round(data.routes[0].duration / 60)
+          // Numbered issue marker
+          const stopIcon = L.divIcon({
+            className: '',
+            html: `<div style="
+              width:24px;height:24px;border-radius:50%;
+              background:${isOnline ? '#1a1a2e' : '#222'};
+              border:2px solid ${isOnline ? '#eab308' : '#6b7280'};
+              display:flex;align-items:center;justify-content:center;
+              font-size:11px;font-weight:bold;
+              color:${isOnline ? '#eab308' : '#9ca3af'};
+            ">${stopNum}</div>`,
+            iconSize: [24, 24], iconAnchor: [12, 12],
+          })
+          const stopMarker = L.marker([issue.latitude, issue.longitude], { icon: stopIcon })
+            .addTo(mapRef.current)
+            .bindPopup(`
+              <div style="font-family:sans-serif;">
+                <div style="font-size:10px;color:#9ca3af;">Stop #${stopNum}</div>
+                <b>${issue.vehicle_no}</b>
+                <div style="font-size:11px;">${issue.client}</div>
+                <div style="font-size:11px;color:#9ca3af;">${issue.city || ''}</div>
+                <div style="font-size:11px;margin-top:4px;">${issue.issue || ''}</div>
+              </div>
+            `)
+          routeLinesRef.current.push(stopMarker)
 
-            const line = L.polyline(coords, {
-              color: isOnline ? '#eab308' : '#6b7280',
-              weight: isOnline ? 3 : 2,
-              opacity: isOnline ? 0.9 : 0.5,
-              dashArray: isOnline ? undefined : '8, 8',
-            }).addTo(mapRef.current)
-            routeLinesRef.current.push(line)
+          // Straight line as fallback
+          const fallback = L.polyline([[prevLat, prevLng], [issue.latitude, issue.longitude]], {
+            color: isOnline ? '#eab308' : '#6b7280',
+            weight: 2, opacity: 0.35, dashArray: '5, 8',
+          }).addTo(mapRef.current)
+          routeLinesRef.current.push(fallback)
 
-            // Distance label on route midpoint
-            const label = L.marker(coords[midIdx], {
-              icon: L.divIcon({
-                className: '',
-                html: `<div style="
-                  background:${isOnline ? '#1a1a2e' : '#111'};
-                  border:1px solid ${isOnline ? '#eab308' : '#4b5563'};
-                  color:${isOnline ? '#eab308' : '#9ca3af'};
-                  padding:2px 6px;border-radius:4px;
-                  font-size:10px;white-space:nowrap;font-weight:600;
-                ">${distKm}km · ${distMins}min</div>`,
-                iconAnchor: [30, 10],
-              })
-            }).addTo(mapRef.current)
-            routeLinesRef.current.push(label)
-          }
-        } catch (e) {
-          console.log('OSRM route failed, keeping straight line:', e)
+          // Fetch road route for this segment
+          try {
+            const url = `https://router.project-osrm.org/route/v1/driving/${prevLng},${prevLat};${issue.longitude},${issue.latitude}?overview=full&geometries=geojson`
+            const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+            const routeData = await res.json()
+            if (routeData.routes?.[0]) {
+              fallback.remove()
+              const fi = routeLinesRef.current.indexOf(fallback)
+              if (fi > -1) routeLinesRef.current.splice(fi, 1)
+
+              const coords = routeData.routes[0].geometry.coordinates.map(([lng, lat]: number[]) => [lat, lng])
+              const distKm = (routeData.routes[0].distance / 1000).toFixed(0)
+              const distMins = Math.round(routeData.routes[0].duration / 60)
+
+              const roadLine = L.polyline(coords, {
+                color: isOnline ? '#eab308' : '#6b7280',
+                weight: isOnline ? 3 : 2,
+                opacity: isOnline ? 0.85 : 0.5,
+                dashArray: isOnline ? undefined : '8,8',
+              }).addTo(mapRef.current)
+              routeLinesRef.current.push(roadLine)
+
+              // Mid-segment distance label
+              const mid = coords[Math.floor(coords.length / 2)]
+              const distLabel = L.marker(mid, {
+                icon: L.divIcon({
+                  className: '',
+                  html: `<div style="
+                    background:#0d0d16;border:1px solid ${isOnline ? '#eab308' : '#4b5563'};
+                    color:${isOnline ? '#eab308' : '#9ca3af'};
+                    padding:1px 5px;border-radius:3px;
+                    font-size:9px;white-space:nowrap;font-weight:600;
+                  ">${distKm}km·${distMins}m</div>`,
+                  iconAnchor: [25, 8],
+                })
+              }).addTo(mapRef.current)
+              routeLinesRef.current.push(distLabel)
+            }
+          } catch { /* keep fallback line */ }
+
+          prevLat = issue.latitude
+          prevLng = issue.longitude
+          done++
+          setRouteProgress({ done, total: totalRoutes })
         }
-
-        done++
-        setRouteProgress({ done, total: assignedIssues.length })
       }
       setRouteProgress(null)
     }
