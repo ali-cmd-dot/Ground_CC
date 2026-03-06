@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowLeft, Save, MapPin } from 'lucide-react'
+import { ArrowLeft, Save, MapPin, CheckCircle } from 'lucide-react'
 import type { Issue, Technician } from '@/lib/types'
 
 export default function EditIssuePage() {
@@ -18,7 +18,6 @@ export default function EditIssuePage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [technicians, setTechnicians] = useState<Technician[]>([])
-  const [locationLoading, setLocationLoading] = useState(false)
 
   const [formData, setFormData] = useState({
     vehicle_no: '', client: '', poc_name: '', poc_number: '',
@@ -62,20 +61,34 @@ export default function EditIssuePage() {
     if (data) setTechnicians(data)
   }
 
-  const getCurrentLocation = () => {
-    setLocationLoading(true)
+  // =============================================
+  // FIX: Only use device location if no coords set
+  // RENAMED: "Get GPS Coordinates" → "Use My Current Location"
+  // =============================================
+  const handleUseMyLocation = () => {
+    if (formData.latitude !== 0 && formData.longitude !== 0) {
+      alert(`Coordinates already set:\n${Number(formData.latitude).toFixed(6)}, ${Number(formData.longitude).toFixed(6)}\n\nTo use your current location, click "Clear Coordinates" first.`)
+      return
+    }
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser')
+      return
+    }
     navigator.geolocation.getCurrentPosition(
       pos => {
         setFormData(prev => ({
           ...prev,
           latitude: pos.coords.latitude,
           longitude: pos.coords.longitude,
-          location: prev.location || `${pos.coords.latitude.toFixed(6)}, ${pos.coords.longitude.toFixed(6)}`
         }))
-        setLocationLoading(false)
       },
-      err => { alert('Unable to get location: ' + err.message); setLocationLoading(false) }
+      err => alert('Unable to get location: ' + err.message),
+      { enableHighAccuracy: true, timeout: 10000 }
     )
+  }
+
+  const handleClearCoords = () => {
+    setFormData(prev => ({ ...prev, latitude: 0, longitude: 0 }))
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -214,14 +227,54 @@ export default function EditIssuePage() {
                     <Input value={formData.location} onChange={e => setFormData({ ...formData, location: e.target.value })} />
                   </div>
                 </div>
-                <Button type="button" variant="outline" onClick={getCurrentLocation} disabled={locationLoading}>
-                  <MapPin className="h-4 w-4 mr-2" />
-                  {locationLoading ? 'Getting...' : 'Get GPS Coordinates'}
-                </Button>
-                {formData.latitude !== 0 && (
-                  <p className="text-sm text-green-600 font-medium">
-                    ✓ GPS: {Number(formData.latitude).toFixed(6)}, {Number(formData.longitude).toFixed(6)}
-                  </p>
+
+                {/* Coordinates */}
+                {formData.latitude !== 0 && formData.longitude !== 0 ? (
+                  <div className="flex items-center justify-between bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <CheckCircle className="h-4 w-4 text-green-600" />
+                      <div>
+                        <p className="text-sm font-semibold text-green-700 dark:text-green-300">GPS Coordinates Set</p>
+                        <p className="text-sm text-green-600 dark:text-green-400 font-mono">
+                          {Number(formData.latitude).toFixed(6)}, {Number(formData.longitude).toFixed(6)}
+                        </p>
+                      </div>
+                    </div>
+                    <Button type="button" variant="outline" size="sm"
+                      className="text-red-600 border-red-200 hover:bg-red-50"
+                      onClick={handleClearCoords}>
+                      Clear
+                    </Button>
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-sm">Latitude</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="12.9716"
+                          value={formData.latitude || ''}
+                          onChange={e => setFormData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-sm">Longitude</Label>
+                        <Input
+                          type="number"
+                          step="any"
+                          placeholder="77.5946"
+                          value={formData.longitude || ''}
+                          onChange={e => setFormData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                        />
+                      </div>
+                    </div>
+                    {/* RENAMED button */}
+                    <Button type="button" variant="outline" onClick={handleUseMyLocation}>
+                      <MapPin className="h-4 w-4 mr-2" />Use My Current Location
+                    </Button>
+                  </div>
                 )}
               </div>
 
