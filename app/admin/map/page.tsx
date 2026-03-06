@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
+import 'leaflet/dist/leaflet.css'
 
 // Hardcoded city centers for offline technicians
 // Add more cities as needed
@@ -132,7 +133,6 @@ export default function IssuesMapPage() {
   const initMap = async () => {
     if (typeof window === 'undefined' || mapRef.current) return
     const L = (await import('leaflet')).default
-    await import('leaflet/dist/leaflet.css')
     if (!mapContainerRef.current) return
 
     const map = L.map(mapContainerRef.current, {
