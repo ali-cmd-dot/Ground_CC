@@ -78,6 +78,40 @@ export default function CreateIssuePage() {
     setLinkSuccess(true)
   }
 
+  // =============================================
+  // FIX: Use current device location ONLY if no
+  // lat/long is already entered manually
+  // =============================================
+  const handleUseMyLocation = () => {
+    if (formData.latitude !== 0 && formData.longitude !== 0) {
+      // Already has coordinates — don't override
+      alert(`Coordinates already set:\n${formData.latitude.toFixed(6)}, ${formData.longitude.toFixed(6)}\n\nTo use your current location, clear the coordinates first.`)
+      return
+    }
+    if (!navigator.geolocation) {
+      alert('Geolocation is not supported by your browser')
+      return
+    }
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setFormData(prev => ({
+          ...prev,
+          latitude: pos.coords.latitude,
+          longitude: pos.coords.longitude,
+        }))
+      },
+      err => alert('Unable to get location: ' + err.message),
+      { enableHighAccuracy: true, timeout: 10000 }
+    )
+  }
+
+  const handleClearCoords = () => {
+    setFormData(prev => ({ ...prev, latitude: 0, longitude: 0 }))
+    setLinkSuccess(false)
+    setLinkError('')
+    setMapsLink('')
+  }
+
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371
     const dLat = (lat2 - lat1) * Math.PI / 180
@@ -266,10 +300,10 @@ export default function CreateIssuePage() {
               </div>
             </div>
 
-            {/* Google Maps Link */}
-            <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4">
+            {/* Google Maps Link — PRIMARY method */}
+            <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4 mb-4">
               <p className="text-sm font-semibold text-blue-300 mb-1 flex items-center gap-2">
-                <Link className="h-4 w-4" />GPS from Google Maps Link
+                <Link className="h-4 w-4" />Set GPS from Google Maps Link
               </p>
               <p className="text-xs text-gray-500 mb-3">
                 Google Maps → Open location → Share → Copy Link → Paste here
@@ -285,15 +319,64 @@ export default function CreateIssuePage() {
                 </Button>
               </div>
               {linkError && <p className="text-xs text-red-400 mt-2 flex items-center gap-1">⚠ {linkError}</p>}
-              {(linkSuccess || formData.latitude !== 0) && (
-                <div className="flex items-center gap-2 mt-2">
-                  <CheckCircle className="h-4 w-4 text-green-400" />
-                  <p className="text-sm text-green-400 font-mono">
-                    {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
-                  </p>
-                </div>
-              )}
             </div>
+
+            {/* Coordinates display + manual entry */}
+            {formData.latitude !== 0 && formData.longitude !== 0 ? (
+              <div className="bg-green-500/8 border border-green-500/20 rounded-xl p-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <CheckCircle className="h-4 w-4 text-green-400" />
+                    <div>
+                      <p className="text-sm font-semibold text-green-400">GPS Coordinates Set</p>
+                      <p className="text-sm text-green-300 font-mono mt-0.5">
+                        {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                      </p>
+                    </div>
+                  </div>
+                  <Button type="button" onClick={handleClearCoords}
+                    className="bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-500/20 text-xs h-8 px-3">
+                    Clear
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="bg-white/3 border border-white/8 rounded-xl p-4">
+                <p className="text-xs text-gray-500 mb-3">Or enter coordinates manually / use your current location:</p>
+                <div className="grid grid-cols-2 gap-3 mb-3">
+                  <div>
+                    <Label className="text-gray-500 text-xs">Latitude</Label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="12.9716"
+                      value={formData.latitude || ''}
+                      onChange={e => setFormData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                      className={inputClass + " text-sm"}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-gray-500 text-xs">Longitude</Label>
+                    <Input
+                      type="number"
+                      step="any"
+                      placeholder="77.5946"
+                      value={formData.longitude || ''}
+                      onChange={e => setFormData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                      className={inputClass + " text-sm"}
+                    />
+                  </div>
+                </div>
+                {/* =============================================
+                    RENAMED: "Get GPS Coordinates" → "Use My Current Location"
+                    FIXED: Only sets coords if no coords already entered
+                    ============================================= */}
+                <Button type="button" variant="outline" onClick={handleUseMyLocation}
+                  className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 text-xs h-8">
+                  <MapPin className="h-3.5 w-3.5 mr-1.5" />Use My Current Location
+                </Button>
+              </div>
+            )}
           </div>
 
           {/* Assignment */}
