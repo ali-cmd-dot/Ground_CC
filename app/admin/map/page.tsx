@@ -339,11 +339,26 @@ export default function IssuesMapPage() {
           `)
         techMarkersRef.current.push(techMarker)
 
+        // Draw straight-line route first as fallback
+        const straightLine = L.polyline([[techLat, techLng], [issue.latitude, issue.longitude]], {
+          color: isOnline ? '#eab308' : '#6b7280',
+          weight: isOnline ? 2 : 1.5,
+          opacity: 0.4,
+          dashArray: '4, 8',
+        }).addTo(mapRef.current)
+        routeLinesRef.current.push(straightLine)
+
+        // Try to get actual road route
         try {
           const url = `https://router.project-osrm.org/route/v1/driving/${techLng},${techLat};${issue.longitude},${issue.latitude}?overview=full&geometries=geojson`
-          const res = await fetch(url)
+          const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
           const data = await res.json()
           if (data.routes?.[0]) {
+            // Remove the straight line fallback
+            straightLine.remove()
+            const idx2 = routeLinesRef.current.indexOf(straightLine)
+            if (idx2 > -1) routeLinesRef.current.splice(idx2, 1)
+
             const coords = data.routes[0].geometry.coordinates.map(([lng, lat]: number[]) => [lat, lng])
             const midIdx = Math.floor(coords.length / 2)
             const distKm = (data.routes[0].distance / 1000).toFixed(0)
@@ -357,7 +372,7 @@ export default function IssuesMapPage() {
             }).addTo(mapRef.current)
             routeLinesRef.current.push(line)
 
-            // Distance label on route
+            // Distance label on route midpoint
             const label = L.marker(coords[midIdx], {
               icon: L.divIcon({
                 className: '',
@@ -373,7 +388,9 @@ export default function IssuesMapPage() {
             }).addTo(mapRef.current)
             routeLinesRef.current.push(label)
           }
-        } catch { /* ignore route errors */ }
+        } catch (e) {
+          console.log('OSRM route failed, keeping straight line:', e)
+        }
 
         done++
         setRouteProgress({ done, total: assignedIssues.length })
