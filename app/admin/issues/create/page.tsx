@@ -27,20 +27,29 @@ export default function CreateIssuePage() {
   const [duplicateWarning, setDuplicateWarning] = useState('')
   const [checkingDuplicate, setCheckingDuplicate] = useState(false)
 
+  // FIX: lat/lng stored as STRING to avoid 0 vs empty confusion
+  const [latInput, setLatInput] = useState('')
+  const [lngInput, setLngInput] = useState('')
+
   const [formData, setFormData] = useState({
     vehicle_no: '', client: '', poc_name: '', poc_number: '',
-    issue: '', city: '', location: '', latitude: 0, longitude: 0,
+    issue: '', city: '', location: '',
     availability: '', priority: 'medium', assigned_to: '',
     availability_date: ''
   })
 
+  // Derived: real numeric coords (null if not set)
+  const latitude = latInput !== '' ? parseFloat(latInput) : null
+  const longitude = lngInput !== '' ? parseFloat(lngInput) : null
+  const hasCoords = latitude !== null && longitude !== null && !isNaN(latitude) && !isNaN(longitude)
+
   useEffect(() => { fetchTechnicians() }, [])
 
   useEffect(() => {
-    if (formData.latitude && formData.longitude) {
-      findNearestTechnician(formData.latitude, formData.longitude)
+    if (hasCoords) {
+      findNearestTechnician(latitude!, longitude!)
     }
-  }, [formData.latitude, formData.longitude])
+  }, [latInput, lngInput])
 
   const fetchTechnicians = async () => {
     const { data } = await supabase.from('technicians').select('*')
@@ -71,21 +80,18 @@ export default function CreateIssuePage() {
     if (!mapsLink.trim()) { setLinkError('Please enter a link first'); return }
     const coords = extractCoordsFromLink(mapsLink)
     if (!coords) {
-      setLinkError('Invalid Google Maps link. Supported formats: maps.google.com/?q=lat,lng or any share link')
+      setLinkError('Invalid Google Maps link. Try: Maps → Share → Copy Link')
       return
     }
-    setFormData(prev => ({ ...prev, latitude: coords.lat, longitude: coords.lng }))
+    setLatInput(coords.lat.toString())
+    setLngInput(coords.lng.toString())
     setLinkSuccess(true)
   }
 
-  // =============================================
-  // FIX: Use current device location ONLY if no
-  // lat/long is already entered manually
-  // =============================================
+  // FIX: Only fires if no coords already present
   const handleUseMyLocation = () => {
-    if (formData.latitude !== 0 && formData.longitude !== 0) {
-      // Already has coordinates — don't override
-      alert(`Coordinates already set:\n${formData.latitude.toFixed(6)}, ${formData.longitude.toFixed(6)}\n\nTo use your current location, clear the coordinates first.`)
+    if (hasCoords) {
+      alert(`Coordinates already set:\n${latitude?.toFixed(6)}, ${longitude?.toFixed(6)}\n\nTo use your current location, clear the coordinates first.`)
       return
     }
     if (!navigator.geolocation) {
@@ -94,11 +100,8 @@ export default function CreateIssuePage() {
     }
     navigator.geolocation.getCurrentPosition(
       pos => {
-        setFormData(prev => ({
-          ...prev,
-          latitude: pos.coords.latitude,
-          longitude: pos.coords.longitude,
-        }))
+        setLatInput(pos.coords.latitude.toString())
+        setLngInput(pos.coords.longitude.toString())
       },
       err => alert('Unable to get location: ' + err.message),
       { enableHighAccuracy: true, timeout: 10000 }
@@ -106,10 +109,12 @@ export default function CreateIssuePage() {
   }
 
   const handleClearCoords = () => {
-    setFormData(prev => ({ ...prev, latitude: 0, longitude: 0 }))
+    setLatInput('')
+    setLngInput('')
     setLinkSuccess(false)
     setLinkError('')
     setMapsLink('')
+    setNearestTech(null)
   }
 
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
@@ -161,15 +166,15 @@ export default function CreateIssuePage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (duplicateWarning && !confirm('Is vehicle ka issue already open hai. Phir bhi add karna hai?')) return
+    if (duplicateWarning && !confirm('This vehicle already has an open issue. Add anyway?')) return
     setLoading(true)
     try {
       const { error } = await supabase.from('issues').insert({
         ...formData,
         vehicle_no: formData.vehicle_no.toUpperCase(),
         assigned_to: formData.assigned_to || null,
-        latitude: formData.latitude || null,
-        longitude: formData.longitude || null,
+        latitude: hasCoords ? latitude : null,
+        longitude: hasCoords ? longitude : null,
         availability_date: formData.availability_date || null,
         status: formData.assigned_to ? 'assigned' : 'pending'
       })
@@ -237,7 +242,7 @@ export default function CreateIssuePage() {
                 <Label className={labelClass}>Availability Date</Label>
                 <Input type="date" value={formData.availability_date}
                   onChange={e => setFormData({ ...formData, availability_date: e.target.value })}
-                  className={inputClass + " "} />
+                  className={inputClass} />
               </div>
               <div>
                 <Label className={labelClass}>POC Name</Label>
@@ -300,7 +305,7 @@ export default function CreateIssuePage() {
               </div>
             </div>
 
-            {/* Google Maps Link — PRIMARY method */}
+            {/* Google Maps Link */}
             <div className="bg-blue-500/5 border border-blue-500/15 rounded-xl p-4 mb-4">
               <p className="text-sm font-semibold text-blue-300 mb-1 flex items-center gap-2">
                 <Link className="h-4 w-4" />Set GPS from Google Maps Link
@@ -318,11 +323,12 @@ export default function CreateIssuePage() {
                   <MapPin className="h-4 w-4 mr-1.5" />Extract
                 </Button>
               </div>
+              {linkSuccess && <p className="text-xs text-green-400 mt-2">✓ Coordinates extracted from link</p>}
               {linkError && <p className="text-xs text-red-400 mt-2 flex items-center gap-1">⚠ {linkError}</p>}
             </div>
 
-            {/* Coordinates display + manual entry */}
-            {formData.latitude !== 0 && formData.longitude !== 0 ? (
+            {/* Coordinates */}
+            {hasCoords ? (
               <div className="bg-green-500/8 border border-green-500/20 rounded-xl p-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -330,7 +336,7 @@ export default function CreateIssuePage() {
                     <div>
                       <p className="text-sm font-semibold text-green-400">GPS Coordinates Set</p>
                       <p className="text-sm text-green-300 font-mono mt-0.5">
-                        {formData.latitude.toFixed(6)}, {formData.longitude.toFixed(6)}
+                        {latitude?.toFixed(6)}, {longitude?.toFixed(6)}
                       </p>
                     </div>
                   </div>
@@ -347,30 +353,26 @@ export default function CreateIssuePage() {
                   <div>
                     <Label className="text-gray-500 text-xs">Latitude</Label>
                     <Input
-                      type="number"
-                      step="any"
-                      placeholder="12.9716"
-                      value={formData.latitude || ''}
-                      onChange={e => setFormData(prev => ({ ...prev, latitude: parseFloat(e.target.value) || 0 }))}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="28.6825"
+                      value={latInput}
+                      onChange={e => setLatInput(e.target.value)}
                       className={inputClass + " text-sm"}
                     />
                   </div>
                   <div>
                     <Label className="text-gray-500 text-xs">Longitude</Label>
                     <Input
-                      type="number"
-                      step="any"
-                      placeholder="77.5946"
-                      value={formData.longitude || ''}
-                      onChange={e => setFormData(prev => ({ ...prev, longitude: parseFloat(e.target.value) || 0 }))}
+                      type="text"
+                      inputMode="decimal"
+                      placeholder="77.0525"
+                      value={lngInput}
+                      onChange={e => setLngInput(e.target.value)}
                       className={inputClass + " text-sm"}
                     />
                   </div>
                 </div>
-                {/* =============================================
-                    RENAMED: "Get GPS Coordinates" → "Use My Current Location"
-                    FIXED: Only sets coords if no coords already entered
-                    ============================================= */}
                 <Button type="button" variant="outline" onClick={handleUseMyLocation}
                   className="border-white/10 text-gray-400 hover:text-white hover:bg-white/5 text-xs h-8">
                   <MapPin className="h-3.5 w-3.5 mr-1.5" />Use My Current Location
@@ -405,7 +407,7 @@ export default function CreateIssuePage() {
               </div>
             )}
             {autoAssigning && <p className="text-sm text-gray-400 mb-4 flex items-center gap-2"><span className="animate-spin">⟳</span> Finding nearest technician...</p>}
-            {formData.latitude !== 0 && !nearestTech && !autoAssigning && (
+            {hasCoords && !nearestTech && !autoAssigning && (
               <p className="text-sm text-yellow-400 mb-4 flex items-center gap-2"><Users className="h-4 w-4" />No active technicians nearby</p>
             )}
             <Label className={labelClass}>Assign to Technician</Label>
