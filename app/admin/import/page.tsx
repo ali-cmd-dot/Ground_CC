@@ -168,7 +168,7 @@ export default function ImportPage() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-sm text-muted-foreground mb-1">In 8 columns ka data fetch hoga:</p>
+            <p className="text-sm text-muted-foreground mb-1">Please ensure that all required 8 columns are completed before submission.:</p>
             <p className="text-xs bg-gray-100 dark:bg-gray-800 rounded px-3 py-2 mb-3 font-mono">
               Client · Vehicle no · POC Name · POC Number · City · Location · Issue · Availability
             </p>
