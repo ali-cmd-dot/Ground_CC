@@ -118,12 +118,26 @@ export default function IssuesMapPage() {
         .eq('is_active', true)
       setTechnicians(techs || [])
 
-      // Load live locations (last 30 mins = online)
-      const { data: locs } = await supabase
-        .from('live_locations')
-        .select('*')
-        .gte('updated_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
-      setLiveLocations(locs || [])
+      // Only consider technicians who checked in TODAY as online
+      const today = new Date().toISOString().split('T')[0]
+      const { data: todayAttendance } = await supabase
+        .from('attendance')
+        .select('technician_id')
+        .eq('date', today)
+        .is('check_out', null)
+
+      const checkedInTodayIds = (todayAttendance || []).map((a: any) => a.technician_id)
+
+      if (checkedInTodayIds.length > 0) {
+        const { data: locs } = await supabase
+          .from('live_locations')
+          .select('*')
+          .in('technician_id', checkedInTodayIds)
+          .gte('updated_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
+        setLiveLocations(locs || [])
+      } else {
+        setLiveLocations([])
+      }
 
     } finally {
       setLoading(false)
