@@ -1,422 +1,481 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase/client'
-import { ArrowLeft, RefreshCw, Navigation } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { ArrowLeft, RefreshCw } from 'lucide-react'
 
-interface TechLoc {
-  id: string
-  name: string
-  lat: number
-  lng: number
-  accuracy?: number
-  updatedAt: string
+// Hardcoded city centers for offline technicians
+// Add more cities as needed
+const CITY_CENTERS: Record<string, [number, number]> = {
+  'delhi': [28.6139, 77.2090],
+  'new delhi': [28.6139, 77.2090],
+  'mumbai': [19.0760, 72.8777],
+  'bombay': [19.0760, 72.8777],
+  'pune': [18.5204, 73.8567],
+  'bangalore': [12.9716, 77.5946],
+  'bengaluru': [12.9716, 77.5946],
+  'hyderabad': [17.3850, 78.4867],
+  'chennai': [13.0827, 80.2707],
+  'kolkata': [22.5726, 88.3639],
+  'ahmedabad': [23.0225, 72.5714],
+  'jaipur': [26.9124, 75.7873],
+  'surat': [21.1702, 72.8311],
+  'lucknow': [26.8467, 80.9462],
+  'kanpur': [26.4499, 80.3319],
+  'nagpur': [21.1458, 79.0882],
+  'indore': [22.7196, 75.8577],
+  'bhopal': [23.2599, 77.4126],
+  'patna': [25.5941, 85.1376],
+  'vadodara': [22.3072, 73.1812],
+  'agra': [27.1767, 78.0081],
+  'chandigarh': [30.7333, 76.7794],
+  'coimbatore': [11.0168, 76.9558],
+  'visakhapatnam': [17.6868, 83.2185],
+  'noida': [28.5355, 77.3910],
+  'gurgaon': [28.4595, 77.0266],
+  'gurugram': [28.4595, 77.0266],
+  'faridabad': [28.4089, 77.3178],
+  'nangloi': [28.6780, 77.0580],
+  'ghaziabad': [28.6692, 77.4538],
 }
 
-export default function LiveMapPage() {
+const getCityCenter = (citiesStr: string): [number, number] | null => {
+  if (!citiesStr) return null
+  const cities = citiesStr.split(',').map(c => c.trim().toLowerCase())
+  for (const city of cities) {
+    if (CITY_CENTERS[city]) return CITY_CENTERS[city]
+    // partial match
+    const match = Object.keys(CITY_CENTERS).find(k => k.includes(city) || city.includes(k))
+    if (match) return CITY_CENTERS[match]
+  }
+  return null
+}
+
+export default function IssuesMapPage() {
   const router = useRouter()
   const mapRef = useRef<any>(null)
   const mapContainerRef = useRef<HTMLDivElement>(null)
-  const markersRef = useRef<Record<string, any>>({})
-  const accuracyCirclesRef = useRef<Record<string, any>>({})
-  const trailsRef = useRef<Record<string, [number, number][]>>({})
-  const trailPolysRef = useRef<Record<string, any>>({})
-  const LRef = useRef<any>(null)
-  const [technicians, setTechnicians] = useState<TechLoc[]>([])
+  const markersRef = useRef<any[]>([])
+  const techMarkersRef = useRef<any[]>([])
+  const routeLinesRef = useRef<any[]>([])
+
+  const [issues, setIssues] = useState<any[]>([])
+  const [technicians, setTechnicians] = useState<any[]>([])
+  const [liveLocations, setLiveLocations] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
-  const [mapReady, setMapReady] = useState(false)
-  const [lastUpdate, setLastUpdate] = useState<Date | null>(null)
+  const [activeFilter, setActiveFilter] = useState<'Priority' | 'Status' | 'Routes' | 'Techs'>('Priority')
+  const [selectedIssue, setSelectedIssue] = useState<any>(null)
+  const [currentUser, setCurrentUser] = useState<any>(null)
 
-  const fetchLocations = async () => {
-    const { data, error } = await supabase
-      .from('live_locations')
-      .select('*, technicians:technician_id(id,name)')
-    if (!error && data) {
-      const locs: TechLoc[] = data
-        .filter((d: any) => d.latitude && d.longitude)
-        .map((d: any) => ({
-          id: d.technician_id,
-          name: d.technicians?.name || 'Unknown',
-          lat: d.latitude,
-          lng: d.longitude,
-          accuracy: d.accuracy,
-          updatedAt: d.updated_at,
-        }))
-      setTechnicians(locs)
-      setLastUpdate(new Date())
-    }
-    setLoading(false)
-  }
-
-  // Realtime subscription
   useEffect(() => {
-    fetchLocations()
-    const channel = supabase.channel('live-map-realtime')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'live_locations' }, () => {
-        fetchLocations()
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(channel) }
+    initMap()
+    checkAuthAndLoad()
   }, [])
 
   useEffect(() => {
-    if (!mapReady && technicians.length > 0) {
-      initMap()
-    } else if (mapReady && technicians.length > 0) {
-      updatePositions()
+    if (mapRef.current) {
+      renderMarkers()
     }
-  }, [technicians])
+  }, [issues, technicians, liveLocations, activeFilter])
 
-  const markerHtml = (tech: TechLoc) => {
-    const secAgo = Math.floor((Date.now() - new Date(tech.updatedAt).getTime()) / 1000)
-    const fresh = secAgo < 45
-    const nameLen = tech.name.length
-    return `
-      <div style="position:relative;display:inline-flex;align-items:center;">
-        ${fresh ? `
-          <div style="position:absolute;top:-10px;left:-10px;right:-10px;bottom:-10px;
-            border-radius:50%;background:rgba(34,197,94,0.12);
-            animation:rpl 2s ease-out infinite;pointer-events:none;"></div>
-          <div style="position:absolute;top:-6px;left:-6px;right:-6px;bottom:-6px;
-            border-radius:50%;background:rgba(34,197,94,0.08);
-            animation:rpl 2s ease-out 0.6s infinite;pointer-events:none;"></div>
-        ` : ''}
-        <div style="
-          background:linear-gradient(135deg,#1e40af,#2563eb);
-          color:#fff;padding:7px 14px 7px 10px;
-          border-radius:22px;
-          font-size:12px;font-weight:700;
-          white-space:nowrap;
-          border:2px solid rgba(255,255,255,0.35);
-          box-shadow:0 4px 20px rgba(37,99,235,0.65), 0 0 0 1px rgba(37,99,235,0.3);
-          display:flex;align-items:center;gap:7px;
-          position:relative;
-          font-family:system-ui;
-        ">
-          <div style="
-            width:8px;height:8px;border-radius:50%;
-            background:${fresh ? '#4ade80' : '#9ca3af'};
-            flex-shrink:0;
-            ${fresh ? 'box-shadow:0 0 10px #4ade80;animation:blk 1.5s ease-in-out infinite;' : ''}
-          "></div>
-          👷 ${tech.name}
-        </div>
-      </div>
-    `
+  const checkAuthAndLoad = async () => {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session) {
+      router.push('/login')
+      return
+    }
+    const { data: user } = await supabase
+      .from('technicians')
+      .select('*')
+      .eq('id', session.user.id)
+      .single()
+    setCurrentUser(user)
+    await loadData(user)
+  }
+
+  const loadData = async (user: any) => {
+    setLoading(true)
+    try {
+      // Load ALL pending/assigned issues with GPS
+      const { data: allIssues } = await supabase
+        .from('issues')
+        .select('*')
+        .not('latitude', 'is', null)
+        .not('longitude', 'is', null)
+        .not('status', 'in', '("completed","cancelled")')
+        .order('created_at', { ascending: false })
+
+      setIssues(allIssues || [])
+
+      // Load all technicians
+      const { data: techs } = await supabase
+        .from('technicians')
+        .select('*')
+        .eq('role', 'technician')
+        .eq('is_active', true)
+      setTechnicians(techs || [])
+
+      // Load live locations (last 30 mins = online)
+      const { data: locs } = await supabase
+        .from('live_locations')
+        .select('*')
+        .gte('updated_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
+      setLiveLocations(locs || [])
+
+    } finally {
+      setLoading(false)
+    }
   }
 
   const initMap = async () => {
-    if (!mapContainerRef.current || mapReady) return
-    try {
-      const L = (await import('leaflet')).default
-      LRef.current = L
-      if (mapRef.current) { mapRef.current.remove(); mapRef.current = null }
+    if (typeof window === 'undefined' || mapRef.current) return
+    const L = (await import('leaflet')).default
+    await import('leaflet/dist/leaflet.css')
+    if (!mapContainerRef.current) return
 
-      // Center on first tech or India
-      const center: [number, number] = technicians.length > 0
-        ? [technicians[0].lat, technicians[0].lng]
-        : [20.5937, 78.9629]
+    const map = L.map(mapContainerRef.current, {
+      center: [22.5, 80.0],
+      zoom: 5,
+      zoomControl: true,
+    })
 
-      const map = L.map(mapContainerRef.current, {
-        zoomControl: false,
-        attributionControl: false
-      }).setView(center, 14)
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+      attribution: '©OpenStreetMap ©CartoDB',
+      maxZoom: 19,
+    }).addTo(map)
 
-      L.control.zoom({ position: 'bottomright' }).addTo(map)
-      L.control.attribution({ position: 'bottomleft', prefix: '' }).addTo(map)
+    mapRef.current = map
+  }
 
-      // Dark map tiles
-      L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
-        attribution: '© OpenStreetMap, © CARTO',
-        subdomains: 'abcd', maxZoom: 19
-      }).addTo(map)
+  const getPriorityColor = (p: string) => {
+    switch (p) {
+      case 'urgent': return '#ef4444'
+      case 'high': return '#f97316'
+      case 'medium': return '#eab308'
+      case 'low': return '#22c55e'
+      default: return '#eab308'
+    }
+  }
 
-      // Add all technician markers
-      technicians.forEach(tech => {
-        // Accuracy circle
-        if (tech.accuracy && tech.accuracy < 500) {
-          const circle = L.circle([tech.lat, tech.lng], {
-            radius: tech.accuracy,
-            color: '#22c55e',
-            fillColor: '#22c55e',
-            fillOpacity: 0.05,
-            weight: 1,
-            opacity: 0.3
-          }).addTo(map)
-          accuracyCirclesRef.current[tech.id] = circle
-        }
+  const getStatusColor = (s: string) => {
+    switch (s) {
+      case 'pending': return '#ef4444'
+      case 'assigned': return '#f97316'
+      case 'in-progress': return '#3b82f6'
+      default: return '#6b7280'
+    }
+  }
 
-        const icon = L.divIcon({
-          html: markerHtml(tech),
-          className: '',
-          iconAnchor: [Math.max(55, tech.name.length * 4 + 40), 18]
-        })
-        const marker = L.marker([tech.lat, tech.lng], { icon, zIndexOffset: 1000 })
-          .addTo(map)
-          .bindPopup(popupHtml(tech), { maxWidth: 220 })
+  const renderMarkers = async () => {
+    if (!mapRef.current) return
+    const L = (await import('leaflet')).default
 
-        markersRef.current[tech.id] = marker
-        trailsRef.current[tech.id] = [[tech.lat, tech.lng]]
+    // Clear old markers/lines
+    markersRef.current.forEach(m => m.remove())
+    techMarkersRef.current.forEach(m => m.remove())
+    routeLinesRef.current.forEach(l => l.remove())
+    markersRef.current = []
+    techMarkersRef.current = []
+    routeLinesRef.current = []
+
+    const bounds: [number, number][] = []
+
+    // ── Issue markers ──────────────────────────────
+    issues.forEach(issue => {
+      const color = activeFilter === 'Status'
+        ? getStatusColor(issue.status)
+        : getPriorityColor(issue.priority)
+
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="
+          width:12px;height:12px;border-radius:50%;
+          background:${color};
+          border:2px solid rgba(255,255,255,0.5);
+          box-shadow:0 0 8px ${color}88;
+        "></div>`,
+        iconSize: [12, 12],
+        iconAnchor: [6, 6],
       })
 
-      if (technicians.length > 1) {
-        map.fitBounds(
-          L.latLngBounds(technicians.map(t => [t.lat, t.lng] as [number, number])),
-          { padding: [80, 80] }
-        )
-      }
+      const tech = technicians.find(t => t.id === issue.assigned_to)
+      const marker = L.marker([issue.latitude, issue.longitude], { icon })
+        .addTo(mapRef.current)
+        .bindTooltip(`${issue.vehicle_no} · ${issue.client}`, { direction: 'top', offset: [0, -8] })
+        .on('click', () => setSelectedIssue(issue))
 
-      setTimeout(() => map.invalidateSize(), 150)
-      mapRef.current = map
-      setMapReady(true)
-    } catch (err) { console.error('Map error:', err) }
-  }
+      markersRef.current.push(marker)
+      bounds.push([issue.latitude, issue.longitude])
+    })
 
-  const popupHtml = (tech: TechLoc) => {
-    const secAgo = Math.floor((Date.now() - new Date(tech.updatedAt).getTime()) / 1000)
-    const timeStr = secAgo < 60 ? `${secAgo}s ago` : `${Math.floor(secAgo / 60)}m ago`
-    return `
-      <div style="font-family:system-ui;padding:2px;">
-        <div style="font-weight:800;font-size:15px;color:#fff;margin-bottom:4px;">👷 ${tech.name}</div>
-        <div style="font-size:12px;color:#9ca3af;margin-bottom:2px;">
-          Updated: ${timeStr} · ${new Date(tech.updatedAt).toLocaleTimeString()}
-        </div>
-        ${tech.accuracy ? `<div style="font-size:11px;color:#6b7280;">GPS Accuracy: ±${Math.round(tech.accuracy)}m</div>` : ''}
-        <div style="font-size:11px;color:#4b5563;margin-top:4px;font-family:monospace;">
-          ${tech.lat.toFixed(6)}, ${tech.lng.toFixed(6)}
-        </div>
-        <button onclick="window.open('https://www.google.com/maps/search/?api=1&query=${tech.lat},${tech.lng}','_blank')"
-          style="margin-top:8px;background:rgba(37,99,235,0.15);border:1px solid rgba(37,99,235,0.3);
-          color:#93c5fd;padding:5px 10px;border-radius:8px;font-size:11px;font-weight:600;
-          cursor:pointer;font-family:system-ui;">
-          Open in Maps
-        </button>
-      </div>
-    `
-  }
+    // ── Technician markers ──────────────────────────
+    if (activeFilter === 'Techs' || activeFilter === 'Routes') {
+      for (const tech of technicians) {
+        const liveData = liveLocations.find(l => l.technician_id === tech.id)
+        const isOnline = !!liveData
+        let lat: number, lng: number
 
-  const updatePositions = () => {
-    const L = LRef.current
-    const map = mapRef.current
-    if (!L || !map) return
-
-    technicians.forEach(tech => {
-      const newPos: [number, number] = [tech.lat, tech.lng]
-
-      // Update or create marker
-      if (markersRef.current[tech.id]) {
-        markersRef.current[tech.id].setLatLng(newPos)
-        markersRef.current[tech.id].setIcon(
-          L.divIcon({
-            html: markerHtml(tech),
-            className: '',
-            iconAnchor: [Math.max(55, tech.name.length * 4 + 40), 18]
-          })
-        )
-        markersRef.current[tech.id].setPopupContent(popupHtml(tech))
-      } else {
-        const icon = L.divIcon({
-          html: markerHtml(tech),
-          className: '',
-          iconAnchor: [Math.max(55, tech.name.length * 4 + 40), 18]
-        })
-        markersRef.current[tech.id] = L.marker(newPos, { icon, zIndexOffset: 1000 })
-          .addTo(map)
-          .bindPopup(popupHtml(tech), { maxWidth: 220 })
-        trailsRef.current[tech.id] = []
-      }
-
-      // Update accuracy circle
-      if (tech.accuracy && tech.accuracy < 500) {
-        if (accuracyCirclesRef.current[tech.id]) {
-          accuracyCirclesRef.current[tech.id].setLatLng(newPos)
-          accuracyCirclesRef.current[tech.id].setRadius(tech.accuracy)
+        if (isOnline) {
+          lat = liveData.latitude
+          lng = liveData.longitude
         } else {
-          accuracyCirclesRef.current[tech.id] = L.circle(newPos, {
-            radius: tech.accuracy, color: '#22c55e', fillColor: '#22c55e',
-            fillOpacity: 0.05, weight: 1, opacity: 0.3
-          }).addTo(map)
+          // Use city center for offline technicians
+          const cityCenter = getCityCenter(tech.cities || tech.city || '')
+          if (!cityCenter) continue
+          ;[lat, lng] = cityCenter
         }
+
+        const initials = (tech.name || '?').split(' ').map((n: string) => n[0]).join('').slice(0, 2).toUpperCase()
+
+        const icon = L.divIcon({
+          className: '',
+          html: `
+            <div style="position:relative;width:36px;height:36px;">
+              <div style="
+                width:36px;height:36px;border-radius:50%;
+                background:${isOnline ? '#3b82f6' : '#4b5563'};
+                border:2px solid ${isOnline ? 'white' : '#9ca3af'};
+                display:flex;align-items:center;justify-content:center;
+                font-size:11px;font-weight:bold;color:white;
+                box-shadow:0 0 ${isOnline ? '10px #3b82f688' : '4px #00000088'};
+              ">${initials}</div>
+              ${isOnline
+                ? `<div style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:#22c55e;border:1.5px solid #080810;"></div>`
+                : `<div style="position:absolute;bottom:0;right:0;width:10px;height:10px;border-radius:50%;background:#6b7280;border:1.5px solid #080810;font-size:7px;color:white;display:flex;align-items:center;justify-content:center;">Z</div>`
+              }
+            </div>`,
+          iconSize: [36, 36],
+          iconAnchor: [18, 18],
+        })
+
+        const techAssignedCount = issues.filter(i => i.assigned_to === tech.id).length
+
+        const marker = L.marker([lat, lng], { icon })
+          .addTo(mapRef.current)
+          .bindPopup(`
+            <div style="min-width:160px;">
+              <b style="font-size:13px;">${tech.name}</b>
+              <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${tech.cities || tech.city || 'No city'}</div>
+              <div style="margin-top:6px;font-size:11px;">
+                ${isOnline
+                  ? '<span style="color:#22c55e;">● Online (Live Location)</span>'
+                  : '<span style="color:#6b7280;">● Offline — City Center shown</span>'
+                }
+              </div>
+              <div style="font-size:11px;margin-top:4px;">Assigned issues: <b>${techAssignedCount}</b></div>
+            </div>
+          `)
+
+        techMarkersRef.current.push(marker)
+        if (isOnline) bounds.push([lat, lng])
       }
+    }
 
-      // Update trail
-      const trail = trailsRef.current[tech.id] || []
-      const last = trail[trail.length - 1]
-      const MIN_MOVEMENT = 0.00005 // ~5 meters
-      const moved = !last || (Math.abs(last[0] - tech.lat) + Math.abs(last[1] - tech.lng)) > MIN_MOVEMENT
+    // ── Routes: tech → their assigned issues ──────
+    if (activeFilter === 'Routes') {
+      for (const issue of issues) {
+        if (!issue.assigned_to) continue
+        const tech = technicians.find(t => t.id === issue.assigned_to)
+        if (!tech) continue
 
-      if (moved) {
-        trail.push(newPos)
-        if (trail.length > 80) trail.splice(0, trail.length - 80)
-        trailsRef.current[tech.id] = trail
+        const liveData = liveLocations.find(l => l.technician_id === tech.id)
+        let techLat: number, techLng: number
 
-        // Redraw trail with gradient effect
-        if (trailPolysRef.current[tech.id]) {
-          try { map.removeLayer(trailPolysRef.current[tech.id]) } catch {}
+        if (liveData) {
+          techLat = liveData.latitude
+          techLng = liveData.longitude
+        } else {
+          const cityCenter = getCityCenter(tech.cities || tech.city || '')
+          if (!cityCenter) continue
+          ;[techLat, techLng] = cityCenter
         }
 
-        if (trail.length >= 2) {
-          const poly = L.polyline(trail, {
-            color: '#22c55e',
-            weight: 4,
-            opacity: 0.7,
-            lineJoin: 'round',
-            lineCap: 'round'
-          }).addTo(map)
-          trailPolysRef.current[tech.id] = poly
+        const isOnline = !!liveData
 
-          // Head dot at current position
-          const head = L.circleMarker(newPos, {
-            radius: 6, color: '#22c55e', fillColor: '#4ade80',
-            fillOpacity: 1, weight: 2, opacity: 0.9
-          }).addTo(map)
-          setTimeout(() => { try { map.removeLayer(head) } catch {} }, 30000)
-        }
-      }
-    })
-
-    // Remove departed techs
-    Object.keys(markersRef.current).forEach(id => {
-      if (!technicians.find(t => t.id === id)) {
         try {
-          map.removeLayer(markersRef.current[id])
-          if (accuracyCirclesRef.current[id]) map.removeLayer(accuracyCirclesRef.current[id])
-          if (trailPolysRef.current[id]) map.removeLayer(trailPolysRef.current[id])
-        } catch {}
-        delete markersRef.current[id]
-        delete accuracyCirclesRef.current[id]
-        delete trailPolysRef.current[id]
+          const url = `https://router.project-osrm.org/route/v1/driving/${techLng},${techLat};${issue.longitude},${issue.latitude}?overview=full&geometries=geojson`
+          const res = await fetch(url)
+          const data = await res.json()
+          if (data.routes?.[0]) {
+            const coords = data.routes[0].geometry.coordinates.map(([lng, lat]: number[]) => [lat, lng])
+            const line = L.polyline(coords, {
+              color: isOnline ? '#eab308' : '#6b7280',
+              weight: 2,
+              opacity: isOnline ? 0.8 : 0.4,
+              dashArray: isOnline ? undefined : '6, 6',
+            }).addTo(mapRef.current)
+            routeLinesRef.current.push(line)
+          }
+        } catch { /* ignore route errors */ }
       }
-    })
+    }
+
+    // Fit map
+    if (bounds.length > 0) {
+      mapRef.current.fitBounds(bounds, { padding: [40, 40], maxZoom: 13 })
+    }
   }
 
-  const focusTech = (tech: TechLoc) => {
-    const map = mapRef.current
-    if (!map) return
-    map.flyTo([tech.lat, tech.lng], 16, { duration: 1.2 })
-    markersRef.current[tech.id]?.openPopup()
-  }
-
-  const timeAgo = (ts: string) => {
-    const s = Math.floor((Date.now() - new Date(ts).getTime()) / 1000)
-    if (s < 60) return `${s}s ago`
-    if (s < 3600) return `${Math.floor(s / 60)}m ago`
-    return `${Math.floor(s / 3600)}h ago`
-  }
+  const issueCount = issues.length
+  const onlineTechs = technicians.filter(t => liveLocations.find(l => l.technician_id === t.id)).length
+  const offlineTechs = technicians.length - onlineTechs
 
   return (
-    <div style={{ height: '100dvh', display: 'flex', flexDirection: 'column', background: '#06060d', fontFamily: 'system-ui,sans-serif', overflow: 'hidden' }}>
-      <style>{`
-        @keyframes rpl{0%{transform:scale(1);opacity:0.6}100%{transform:scale(3.5);opacity:0}}
-        @keyframes blk{0%,100%{opacity:1}50%{opacity:0.15}}
-        @keyframes spin{to{transform:rotate(360deg)}}
-        @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}
-        .leaflet-popup-content-wrapper{
-          background:#13131f!important;border:1px solid rgba(255,255,255,0.1)!important;
-          color:white!important;border-radius:14px!important;
-          box-shadow:0 12px 40px rgba(0,0,0,0.7)!important;padding:0!important;
-        }
-        .leaflet-popup-content{margin:14px 16px!important;}
-        .leaflet-popup-tip{background:#13131f!important;}
-        .leaflet-container{background:#0a0a14!important;}
-        .leaflet-control-zoom a{
-          background:#13131f!important;border-color:rgba(255,255,255,0.08)!important;
-          color:white!important;width:32px!important;height:32px!important;line-height:32px!important;
-        }
-        .leaflet-control-attribution{background:rgba(0,0,0,0.5)!important;color:rgba(255,255,255,0.2)!important;font-size:9px!important;}
-        .tech-chip{display:flex;align-items:center;gap:7px;background:rgba(255,255,255,0.05);
-          border:1px solid rgba(255,255,255,0.08);border-radius:20px;
-          padding:7px 13px;cursor:pointer;flex-shrink:0;
-          transition:border-color 0.2s,background 0.2s;white-space:nowrap;}
-        .tech-chip:hover{background:rgba(255,255,255,0.1);border-color:rgba(255,255,255,0.15);}
-        .tech-chip.fresh{border-color:rgba(34,197,94,0.25);background:rgba(34,197,94,0.06);}
-      `}</style>
-
-      {/* HEADER */}
-      <div style={{ background: '#0c0c14', borderBottom: '1px solid rgba(255,255,255,0.06)', padding: '11px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <button onClick={() => router.push('/admin')} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '9px', color: '#fff', width: '34px', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-            <ArrowLeft size={16} />
-          </button>
-          <div>
-            <p style={{ fontSize: '15px', fontWeight: '700', color: '#fff', lineHeight: 1 }}>Live Tracking</p>
-            <p style={{ fontSize: '11px', color: 'rgba(255,255,255,0.28)', marginTop: '2px' }}>Real-time movement trail</p>
+    <div className="min-h-screen bg-[#080810] flex flex-col" style={{ height: '100vh' }}>
+      {/* Header */}
+      <header className="bg-[#0a0a12] border-b border-white/8 z-20 relative flex-shrink-0">
+        <div className="px-4 py-3 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Button variant="ghost" onClick={() => router.back()} className="text-gray-400 hover:text-white h-8 px-2">
+              <ArrowLeft className="h-4 w-4" />
+            </Button>
+            <h1 className="text-sm font-bold text-white">Issues Map</h1>
           </div>
+          <Button variant="ghost" onClick={() => loadData(currentUser)} className="text-gray-400 hover:text-white h-8 w-8 p-0">
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          </Button>
         </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          {lastUpdate && (
-            <span style={{ fontSize: '11px', color: 'rgba(255,255,255,0.25)' }}>
-              Updated {timeAgo(lastUpdate.toISOString())}
-            </span>
-          )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '5px', background: 'rgba(34,197,94,0.08)', border: '1px solid rgba(34,197,94,0.18)', borderRadius: '8px', padding: '5px 10px' }}>
-            <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#4ade80', animation: 'pulse 2s infinite' }} />
-            <span style={{ fontSize: '12px', color: '#4ade80', fontWeight: '600' }}>Live</span>
-          </div>
-          <button onClick={fetchLocations} style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.08)', borderRadius: '9px', color: '#fff', width: '34px', height: '34px', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }}>
-            <RefreshCw size={14} />
-          </button>
+
+        {/* Stats row */}
+        <div className="px-4 pb-2 flex items-center gap-4 text-xs text-gray-400 flex-wrap">
+          <span>📍 Issues: <b className="text-white">{issueCount}</b></span>
+          <span>🟢 Online: <b className="text-green-400">{onlineTechs}</b></span>
+          <span>⚫ Offline: <b className="text-gray-400">{offlineTechs}</b></span>
         </div>
-      </div>
 
-      {/* TECH CHIPS STRIP */}
-      <div style={{ background: '#0c0c14', borderBottom: '1px solid rgba(255,255,255,0.04)', padding: '8px 12px', overflowX: 'auto', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: '7px', minWidth: 'max-content', alignItems: 'center' }}>
-          {loading ? (
-            <span style={{ fontSize: '12px', color: '#4b5563' }}>Loading locations…</span>
-          ) : technicians.length === 0 ? (
-            <span style={{ fontSize: '12px', color: '#4b5563' }}>No technicians online. They appear when checked in.</span>
-          ) : technicians.map(tech => {
-            const secAgo = Math.floor((Date.now() - new Date(tech.updatedAt).getTime()) / 1000)
-            const fresh = secAgo < 45
-            return (
-              <button key={tech.id} className={`tech-chip ${fresh ? 'fresh' : ''}`} onClick={() => focusTech(tech)}>
-                <div style={{ width: '8px', height: '8px', borderRadius: '50%', background: fresh ? '#4ade80' : '#6b7280', boxShadow: fresh ? '0 0 8px #4ade80' : 'none', flexShrink: 0, animation: fresh ? 'pulse 2s infinite' : 'none' }} />
-                <span style={{ fontSize: '12px', fontWeight: '700', color: '#fff' }}>{tech.name}</span>
-                <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.28)' }}>
-                  {secAgo < 60 ? `${secAgo}s` : `${Math.floor(secAgo / 60)}m`}
-                </span>
-                {tech.accuracy && tech.accuracy < 30 && (
-                  <span style={{ fontSize: '10px', color: '#4ade80', background: 'rgba(74,222,128,0.1)', padding: '1px 5px', borderRadius: '5px' }}>±{Math.round(tech.accuracy)}m</span>
-                )}
-              </button>
-            )
-          })}
+        {/* Filter tabs */}
+        <div className="px-4 pb-3 flex gap-2">
+          {(['Priority', 'Status', 'Routes', 'Techs'] as const).map(f => (
+            <button
+              key={f}
+              onClick={() => setActiveFilter(f)}
+              className={`px-3 py-1 rounded text-xs font-medium transition-all ${
+                activeFilter === f
+                  ? 'bg-white text-black'
+                  : 'bg-white/10 text-gray-400 hover:bg-white/20'
+              }`}
+            >
+              {f}
+            </button>
+          ))}
         </div>
-      </div>
 
-      {/* LEGEND */}
-      <div style={{ background: '#0c0c14', padding: '5px 14px 6px', display: 'flex', gap: '16px', flexShrink: 0, borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ display: 'inline-block', width: '22px', height: '3px', background: 'linear-gradient(to right, rgba(74,222,128,0.3), #4ade80)', borderRadius: '2px' }} />
-          Movement trail
-        </span>
-        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <span style={{ display: 'inline-block', width: '10px', height: '10px', borderRadius: '50%', background: 'rgba(34,197,94,0.2)', border: '2px solid #22c55e' }} />
-          GPS accuracy circle
-        </span>
-        <span style={{ fontSize: '10px', color: 'rgba(255,255,255,0.25)', display: 'flex', alignItems: 'center', gap: '5px' }}>
-          <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#4ade80' }} />
-          Online · 
-          <div style={{ width: '7px', height: '7px', borderRadius: '50%', background: '#6b7280', marginLeft: '-2px' }} />
-          Stale
-        </span>
-      </div>
-
-      {/* MAP */}
-      <div style={{ flex: 1, position: 'relative', minHeight: 0 }}>
-        {!mapReady && (
-          <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#06060d', zIndex: 10, flexDirection: 'column', gap: '14px' }}>
-            <div style={{ width: '40px', height: '40px', border: '3px solid #22c55e', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-            <p style={{ color: '#4b5563', fontSize: '13px' }}>
-              {technicians.length === 0
-                ? 'Waiting for technicians to check in…'
-                : `Loading map for ${technicians.length} technician${technicians.length > 1 ? 's' : ''}…`}
-            </p>
+        {/* Legend */}
+        {activeFilter === 'Priority' && (
+          <div className="px-4 pb-2 flex gap-3 text-xs">
+            {[['urgent','#ef4444'],['high','#f97316'],['medium','#eab308'],['low','#22c55e']].map(([label, color]) => (
+              <span key={label} className="flex items-center gap-1 text-gray-400">
+                <span style={{ background: color as string }} className="w-2 h-2 rounded-full inline-block" />
+                {label}
+              </span>
+            ))}
           </div>
         )}
-        <div ref={mapContainerRef} style={{ height: '100%', width: '100%' }} />
+        {(activeFilter === 'Techs' || activeFilter === 'Routes') && (
+          <div className="px-4 pb-2 flex gap-4 text-xs text-gray-400">
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-blue-500 inline-block" /> Online (exact location)</span>
+            <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-gray-500 inline-block" /> Offline (city center)</span>
+          </div>
+        )}
+      </header>
+
+      {/* Map container */}
+      <div className="flex-1 relative overflow-hidden">
+        <div ref={mapContainerRef} style={{ position: 'absolute', inset: 0, zIndex: 1 }} />
+
+        {loading && (
+          <div className="absolute inset-0 flex items-center justify-center z-10 bg-black/50">
+            <div className="animate-spin rounded-full h-10 w-10 border-b-2 border-white" />
+          </div>
+        )}
+
+        {/* Right panel: issue list */}
+        <div
+          className="absolute top-0 right-0 w-68 overflow-y-auto z-10 bg-[#0a0a12]/95 border-l border-white/8 p-3"
+          style={{ maxHeight: '100%', width: '270px' }}
+        >
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
+            All Issues ({issueCount})
+          </p>
+          {issues.map(issue => {
+            const tech = technicians.find(t => t.id === issue.assigned_to)
+            const isOnline = tech ? !!liveLocations.find(l => l.technician_id === tech.id) : false
+            const color = getPriorityColor(issue.priority)
+            return (
+              <div
+                key={issue.id}
+                className={`mb-2 p-2 rounded-lg cursor-pointer border transition-all ${
+                  selectedIssue?.id === issue.id
+                    ? 'bg-white/10 border-white/20'
+                    : 'bg-white/3 border-white/5 hover:bg-white/8'
+                }`}
+                onClick={() => {
+                  setSelectedIssue(issue)
+                  if (mapRef.current) {
+                    mapRef.current.setView([issue.latitude, issue.longitude], 14)
+                  }
+                }}
+              >
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-xs font-mono font-bold text-white">{issue.vehicle_no}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: color + '22', color }}>
+                    {issue.priority}
+                  </span>
+                </div>
+                <p className="text-[11px] text-gray-400">{issue.client} · {issue.city}</p>
+                {tech && (
+                  <p className={`text-[10px] mt-1 flex items-center gap-1 ${isOnline ? 'text-green-400' : 'text-gray-500'}`}>
+                    {isOnline ? '🟢' : '⚫'} {tech.name}
+                  </p>
+                )}
+                {!issue.assigned_to && (
+                  <p className="text-[10px] text-red-400 mt-1">⚠ Unassigned</p>
+                )}
+              </div>
+            )
+          })}
+          {issues.length === 0 && !loading && (
+            <p className="text-xs text-gray-500 text-center py-8">No active issues with GPS</p>
+          )}
+        </div>
+
+        {/* Bottom card: selected issue detail */}
+        {selectedIssue && (
+          <div className="absolute bottom-4 left-4 z-10 bg-[#0d0d16] border border-white/10 rounded-2xl p-4 shadow-2xl"
+            style={{ right: '290px' }}>
+            <div className="flex items-start justify-between gap-4">
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <p className="font-mono font-bold text-white">{selectedIssue.vehicle_no}</p>
+                  <span className="text-[10px] px-2 py-0.5 rounded bg-white/10 text-gray-300">{selectedIssue.status}</span>
+                </div>
+                <p className="text-sm text-gray-400 mt-0.5">{selectedIssue.client}</p>
+                <p className="text-xs text-gray-500">{selectedIssue.city}{selectedIssue.location ? ` · ${selectedIssue.location}` : ''}</p>
+                <p className="text-xs text-gray-300 mt-2 line-clamp-2">{selectedIssue.issue}</p>
+                {selectedIssue.assigned_to && (() => {
+                  const tech = technicians.find(t => t.id === selectedIssue.assigned_to)
+                  const isOnline = tech ? !!liveLocations.find(l => l.technician_id === tech.id) : false
+                  return tech ? (
+                    <p className={`text-xs mt-1 ${isOnline ? 'text-green-400' : 'text-gray-500'}`}>
+                      👷 {tech.name} · {isOnline ? 'Online' : 'Offline'}
+                    </p>
+                  ) : null
+                })()}
+              </div>
+              <div className="flex flex-col items-end gap-2 flex-shrink-0">
+                <Button size="sm" className="text-xs h-7 bg-blue-600 hover:bg-blue-700"
+                  onClick={() => router.push(`/admin/issues/${selectedIssue.id}`)}>
+                  View
+                </Button>
+                <button className="text-xs text-gray-500 hover:text-white" onClick={() => setSelectedIssue(null)}>
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )
