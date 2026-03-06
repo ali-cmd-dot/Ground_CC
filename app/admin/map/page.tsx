@@ -118,26 +118,16 @@ export default function IssuesMapPage() {
         .eq('is_active', true)
       setTechnicians(techs || [])
 
-      // Only consider technicians who checked in TODAY as online
-      const today = new Date().toISOString().split('T')[0]
-      const { data: todayAttendance } = await supabase
-        .from('attendance')
-        .select('technician_id')
-        .eq('date', today)
-        .is('check_out', null)
+      // Online = live location updated in last 5 minutes
+      // (technician app sends location every 12 seconds when active)
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString()
 
-      const checkedInTodayIds = (todayAttendance || []).map((a: any) => a.technician_id)
+      const { data: freshLocs } = await supabase
+        .from('live_locations')
+        .select('*')
+        .gte('updated_at', fiveMinAgo)
 
-      if (checkedInTodayIds.length > 0) {
-        const { data: locs } = await supabase
-          .from('live_locations')
-          .select('*')
-          .in('technician_id', checkedInTodayIds)
-          .gte('updated_at', new Date(Date.now() - 30 * 60 * 1000).toISOString())
-        setLiveLocations(locs || [])
-      } else {
-        setLiveLocations([])
-      }
+      setLiveLocations(freshLocs || [])
 
     } finally {
       setLoading(false)
@@ -269,16 +259,22 @@ export default function IssuesMapPage() {
         const marker = L.marker([lat, lng], { icon })
           .addTo(mapRef.current)
           .bindPopup(`
-            <div style="min-width:160px;">
+            <div style="min-width:180px;font-family:sans-serif;">
               <b style="font-size:13px;">${tech.name}</b>
-              <div style="font-size:11px;color:#9ca3af;margin-top:2px;">${tech.cities || tech.city || 'No city'}</div>
-              <div style="margin-top:6px;font-size:11px;">
+              <div style="font-size:11px;color:#9ca3af;margin-top:2px;">📍 ${tech.cities || tech.city || 'No city set'}</div>
+              <div style="margin-top:8px;font-size:11px;padding:4px 8px;border-radius:4px;${
+                isOnline
+                  ? 'background:#16a34a22;color:#22c55e;'
+                  : 'background:#37415122;color:#9ca3af;'
+              }">
                 ${isOnline
-                  ? '<span style="color:#22c55e;">● Online (Live Location)</span>'
-                  : '<span style="color:#6b7280;">● Offline — City Center shown</span>'
+                  ? '🟢 Online — Live GPS Location'
+                  : '⚫ Not logged in yet<br/><span style="font-size:10px;color:#6b7280;">Showing city center</span>'
                 }
               </div>
-              <div style="font-size:11px;margin-top:4px;">Assigned issues: <b>${techAssignedCount}</b></div>
+              <div style="font-size:11px;margin-top:6px;color:#d1d5db;">
+                Assigned issues: <b style="color:white;">${techAssignedCount}</b>
+              </div>
             </div>
           `)
 
@@ -442,6 +438,7 @@ export default function IssuesMapPage() {
                 {tech && (
                   <p className={`text-[10px] mt-1 flex items-center gap-1 ${isOnline ? 'text-green-400' : 'text-gray-500'}`}>
                     {isOnline ? '🟢' : '⚫'} {tech.name}
+                    {!isOnline && <span className="text-gray-600 ml-1">(not logged in)</span>}
                   </p>
                 )}
                 {!issue.assigned_to && (
